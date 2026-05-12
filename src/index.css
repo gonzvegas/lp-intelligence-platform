@@ -1,0 +1,32 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'DM Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, 'Cascadia Code', monospace;
+  --color-surface: oklch(0.985 0.004 280);
+  --color-surface-muted: oklch(0.96 0.01 280);
+  --color-border: oklch(0.88 0.02 280);
+  --color-ink: oklch(0.22 0.04 280);
+  --color-ink-muted: oklch(0.45 0.03 280);
+  --color-accent: oklch(0.52 0.2 265);
+  --color-accent-muted: oklch(0.92 0.04 265);
+  --color-success: oklch(0.55 0.14 155);
+  --color-warning: oklch(0.72 0.14 85);
+  --color-danger: oklch(0.55 0.2 25);
+}
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: var(--font-sans);
+  background: var(--color-surface-muted);
+  color: var(--color-ink);
+}
+
+#root {
+  min-height: 100vh;
+}
