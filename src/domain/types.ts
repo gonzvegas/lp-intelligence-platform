@@ -14,30 +14,53 @@ export interface LimitedPartner {
   fundedUsd: number
 }
 
-export type RestrictionCategory = 'sector' | 'geography' | 'esg' | 'other'
+/** Fund agreement & LP-specific instruments that drive screening + obligations. */
+export type LegalInstrumentKind =
+  | 'lpa'
+  | 'side_letter'
+  | 'side_letter_erisa'
+  | 'mfn_election'
+  | 'ima'
+  | 'co_invest'
 
-export type RestrictionSeverity = 'hard' | 'soft'
-
-export interface ExtractedRestriction {
+export interface LegalDocument {
   id: string
-  lpId: string
-  sideLetterId: string
-  category: RestrictionCategory
-  severity: RestrictionSeverity
-  summary: string
-  rawQuote?: string
-  effectiveFrom: string
-  effectiveTo?: string
-  reviewStatus: 'draft' | 'confirmed'
-}
-
-export interface SideLetterDocument {
-  id: string
-  lpId: string
+  fundId: string
+  /** null = fund-wide instrument (e.g. LPA) */
+  lpId: string | null
+  /** Set when obligation/instrument is deal-specific (e.g. co-invest) */
+  dealId: string | null
+  kind: LegalInstrumentKind
   title: string
   uploadedAt: string
   reviewStatus: 'processing' | 'extracted' | 'confirmed'
   restrictionIds: string[]
+}
+
+/** @deprecated Use LegalDocument — identical shape */
+export type SideLetterDocument = LegalDocument
+
+export type RestrictionCategory = 'sector' | 'geography' | 'esg' | 'other'
+
+export type RestrictionSeverity = 'hard' | 'soft'
+
+/** Structured clause projection used by deal screening (pass/fail). */
+export interface ExtractedRestriction {
+  id: string
+  /** null = applies to all LPs in the fund (typical LPA-level rule in mock) */
+  lpId: string | null
+  legalDocumentId: string
+  instrumentKind: LegalInstrumentKind
+  /** Lower number wins when policies conflict (organizational default — Legal confirms). */
+  precedenceRank: number
+  category: RestrictionCategory
+  severity: RestrictionSeverity
+  summary: string
+  sectionRef?: string
+  rawQuote?: string
+  effectiveFrom: string
+  effectiveTo?: string
+  reviewStatus: 'draft' | 'confirmed'
 }
 
 export interface Deal {
@@ -46,6 +69,8 @@ export interface Deal {
   sector: string
   geography: string
   esgFlags: string[]
+  /** Tags for mock screening (e.g. affiliate_sponsor, bridge_facility). */
+  structureTags?: string[]
   proposedAmountUsd: number
   pipelineStage: string
 }
@@ -55,6 +80,10 @@ export type ScreeningOutcome = 'eligible' | 'ineligible' | 'needs_review'
 export interface ScreeningRestrictionHit {
   restrictionId: string
   reason: string
+  instrumentKind: LegalInstrumentKind
+  legalDocumentId: string
+  instrumentTitle: string
+  precedenceRank: number
 }
 
 export interface ScreeningResult {
@@ -99,12 +128,38 @@ export interface CapacitySnapshot {
   maxNewDealUsd: number
 }
 
+/** Structured clause projection for ongoing compliance (not pass/fail per deal). */
+export type ObligationKind =
+  | 'consent'
+  | 'notice'
+  | 'reporting'
+  | 'mfn_election_window'
+  | 'co_invest_allocation'
+  | 'other'
+
+export interface Obligation {
+  id: string
+  title: string
+  kind: ObligationKind
+  instrumentKind: LegalInstrumentKind
+  lpId: string | null
+  dealId: string | null
+  legalDocumentId: string
+  sectionRef?: string
+  dueAt: string | null
+  recurrence?: string
+  ownerRole: string
+  status: 'open' | 'done' | 'waived' | 'overdue'
+  evidenceNote?: string
+}
+
 export type AuditEventType =
   | 'screening_run'
   | 'restriction_confirmed'
   | 'sign_off'
   | 'document_upload'
   | 'integration_sync'
+  | 'obligation_completed'
 
 export interface AuditEvent {
   id: string

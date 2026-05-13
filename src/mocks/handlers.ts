@@ -6,13 +6,14 @@ import type {
   Deal,
   ExtractedRestriction,
   IntegrationStatus,
+  LegalDocument,
   LimitedPartner,
+  Obligation,
   ReportJob,
   Role,
   ScreeningRestrictionHit,
   ScreeningResult,
   ScreeningRun,
-  SideLetterDocument,
   SignOff,
   UserAccount,
 } from '../domain/types'
@@ -22,7 +23,9 @@ import {
   capacityRules,
   deals,
   integrations,
+  legalDocuments,
   limitedPartners,
+  obligations,
   reportJobs,
   restrictions,
   roles,
@@ -38,6 +41,21 @@ function restrictionConflictsDeal(
   const s = r.summary.toLowerCase()
   const sector = deal.sector.toLowerCase()
   const geo = deal.geography.toLowerCase()
+  const tags = deal.structureTags ?? []
+
+  if (
+    s.includes('prohibited transaction') &&
+    tags.includes('affiliate_sponsor')
+  ) {
+    return 'ERISA / plan asset analysis may be required (affiliate economics).'
+  }
+  if (
+    s.includes('advisory committee') &&
+    s.includes('affiliate') &&
+    tags.includes('affiliate_sponsor')
+  ) {
+    return 'LPA requires Advisory Committee disclosure for sponsor-affiliate transactions.'
+  }
 
   if (r.category === 'sector') {
     if (
@@ -80,12 +98,26 @@ function restrictionConflictsDeal(
 
 export function evaluateScreeningForDeal(deal: Deal): ScreeningResult[] {
   return limitedPartners.map((lp) => {
-    const lpRestrictions = restrictions.filter((x) => x.lpId === lp.id)
+    const lpRestrictions = restrictions.filter(
+      (x) => x.lpId === null || x.lpId === lp.id,
+    )
     const hits: ScreeningRestrictionHit[] = []
     for (const r of lpRestrictions) {
       const reason = restrictionConflictsDeal(r, deal)
-      if (reason) hits.push({ restrictionId: r.id, reason })
+      if (reason) {
+        const doc = legalDocuments.find((d) => d.id === r.legalDocumentId)
+        hits.push({
+          restrictionId: r.id,
+          reason,
+          instrumentKind: r.instrumentKind,
+          legalDocumentId: r.legalDocumentId,
+          instrumentTitle: doc?.title ?? r.legalDocumentId,
+          precedenceRank: r.precedenceRank,
+        })
+      }
     }
+
+    hits.sort((a, b) => a.precedenceRank - b.precedenceRank)
 
     let outcome: ScreeningResult['outcome'] = 'eligible'
     if (hits.length) {
@@ -118,7 +150,7 @@ export function createScreeningRun(
   runBy: string,
 ): ScreeningRun {
   const results = evaluateScreeningForDeal(deal)
-  const rulePackVersion = 'rules-mock-2026.05'
+  const rulePackVersion = 'rules-mock-2026.05+LPA+ERISA'
   return {
     id: `sr-${Date.now()}`,
     dealId: deal.id,
@@ -147,12 +179,24 @@ export function getLpById(id: string): LimitedPartner | undefined {
   return limitedPartners.find((lp) => lp.id === id)
 }
 
-export function listSideLetters(): SideLetterDocument[] {
+export function listLegalDocuments(): LegalDocument[] {
+  return [...legalDocuments].sort((a, b) =>
+    a.uploadedAt < b.uploadedAt ? 1 : -1,
+  )
+}
+
+export function getLegalDocumentById(id: string): LegalDocument | undefined {
+  return legalDocuments.find((d) => d.id === id)
+}
+
+/** @deprecated narrow catalog — prefer listLegalDocuments + filter */
+export function listSideLetters(): LegalDocument[] {
   return sideLetters
 }
 
-export function getSideLetterById(id: string): SideLetterDocument | undefined {
-  return sideLetters.find((s) => s.id === id)
+/** @deprecated use getLegalDocumentById */
+export function getSideLetterById(id: string): LegalDocument | undefined {
+  return getLegalDocumentById(id)
 }
 
 export function listRestrictions(): ExtractedRestriction[] {
@@ -160,7 +204,54 @@ export function listRestrictions(): ExtractedRestriction[] {
 }
 
 export function restrictionsForLp(lpId: string): ExtractedRestriction[] {
-  return restrictions.filter((r) => r.lpId === lpId)
+  return restrictions.filter((r) => r.lpId === null || r.lpId === lpId)
+}
+
+export function restrictionsForDocument(
+  legalDocumentId: string,
+): ExtractedRestriction[] {
+  return restrictions.filter((r) => r.legalDocumentId === legalDocumentId)
+}
+
+export function listObligations(): Obligation[] {
+  return [...obligations].sort((a, b) => {
+    const ta = a.dueAt ?? ''
+    const tb = b.dueAt ?? ''
+    if (!ta && !tb) return 0
+    if (!ta) return 1
+    if (!tb) return -1
+    return ta < tb ? -1 : 1
+  })
+}
+
+export function obligationsForLp(lpId: string): Obligation[] {
+  return obligations.filter((o) => o.lpId === null || o.lpId === lpId)
+}
+
+export function obligationsForDocument(
+  legalDocumentId: string,
+): Obligation[] {
+  return obligations.filter((o) => o.legalDocumentId === legalDocumentId)
+}
+
+export function completeObligation(
+  id: string,
+  actor: string,
+): Obligation | undefined {
+  const row = obligations.find((o) => o.id === id)
+  if (!row || row.status === 'done') return undefined
+  row.status = 'done'
+  row.evidenceNote =
+    row.evidenceNote ?? `Marked complete by ${actor} (mock evidence link).`
+  appendAuditEvent({
+    at: new Date().toISOString(),
+    actor,
+    persona: 'compliance',
+    type: 'obligation_completed',
+    summary: `Obligation ${id} marked complete.`,
+    entityRef: id,
+  })
+  return row
 }
 
 export function allocationsForLp(lpId: string): Allocation[] {

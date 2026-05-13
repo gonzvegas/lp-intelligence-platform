@@ -4,6 +4,7 @@ import { cx } from '../util/cx'
 const tabs = [
   { to: '/compliance/audit', label: 'Audit log' },
   { to: '/compliance/sign-offs', label: 'Sign-offs' },
+  { to: '/compliance/obligations', label: 'Obligations' },
   { to: '/compliance/reports', label: 'Reports' },
 ]
 

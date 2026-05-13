@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api/client'
-import type { Deal, LimitedPartner, SignOff } from '../domain/types'
+import type { Deal, LimitedPartner, Obligation, SignOff } from '../domain/types'
 import { Badge, Card } from '../components/ui'
 import { formatUsd } from '../util/format'
 
@@ -9,20 +9,23 @@ export function Dashboard() {
   const [deals, setDeals] = useState<Deal[]>([])
   const [lps, setLps] = useState<LimitedPartner[]>([])
   const [signOffs, setSignOffs] = useState<SignOff[]>([])
+  const [obligations, setObligations] = useState<Obligation[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     let mounted = true
     ;(async () => {
-      const [d, lp, so] = await Promise.all([
+      const [d, lp, so, ob] = await Promise.all([
         api.listDeals(),
         api.listLPs(),
         api.listSignOffs(),
+        api.listObligations(),
       ])
       if (!mounted) return
       setDeals(d)
       setLps(lp)
       setSignOffs(so)
+      setObligations(ob)
       setLoading(false)
     })()
     return () => {
@@ -32,6 +35,9 @@ export function Dashboard() {
 
   const icDeals = deals.filter((x) => x.pipelineStage.includes('IC'))
   const pendingSignOffs = signOffs.filter((s) => s.status === 'pending')
+  const openObligations = obligations.filter(
+    (o) => o.status === 'open' || o.status === 'overdue',
+  )
 
   const capacityPreview = lps.slice(0, 4)
 
@@ -42,8 +48,8 @@ export function Dashboard() {
           Dashboard
         </h1>
         <p className="mt-2 max-w-3xl text-sm text-[var(--color-ink-muted)]">
-          Snapshot of screening workload, concentration headroom, and compliance
-          queues before investment committee decisions.
+          Snapshot of deal screening, LP obligations (consents / notices / ERISA /
+          MFN), concentration headroom, and compliance sign-offs before IC.
         </p>
       </div>
 
@@ -125,7 +131,37 @@ export function Dashboard() {
               >
                 Open sign-offs
               </Link>
+              <div className="mt-4 flex items-center justify-between rounded-lg bg-[var(--color-surface-muted)] px-4 py-3">
+                <span className="text-sm text-[var(--color-ink-muted)]">
+                  Open obligations
+                </span>
+                <span className="text-2xl font-semibold text-[var(--color-ink)]">
+                  {openObligations.length}
+                </span>
+              </div>
+              <Link
+                className="mt-2 inline-block text-sm font-medium text-[var(--color-accent)] hover:underline"
+                to="/obligations"
+              >
+                Obligation registry
+              </Link>
             </div>
+          </Card>
+
+          <Card
+            title="Legal instruments"
+            subtitle="LPA, side letters, ERISA, MFN, IMA, co-invest — unified catalog."
+          >
+            <p className="text-sm text-[var(--color-ink-muted)]">
+              Screening consumes confirmed restriction facts; obligations track
+              operating tasks with evidence.
+            </p>
+            <Link
+              className="mt-4 inline-block text-sm font-medium text-[var(--color-accent)] hover:underline"
+              to="/instruments"
+            >
+              Browse instruments
+            </Link>
           </Card>
 
           <Card

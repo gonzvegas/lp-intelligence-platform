@@ -6,7 +6,8 @@ import { cx } from '../util/cx'
 const nav = [
   { to: '/', label: 'Dashboard', end: true },
   { to: '/lps', label: 'LP Management' },
-  { to: '/side-letters', label: 'Side Letter Intelligence' },
+  { to: '/instruments', label: 'Legal instruments' },
+  { to: '/obligations', label: 'Obligations' },
   { to: '/deals', label: 'Deal Screening' },
   { to: '/capacity', label: 'Capacity' },
   { to: '/compliance', label: 'Compliance' },

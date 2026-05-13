@@ -17,6 +17,7 @@ import {
 } from '../../components/ui'
 import { useFlash } from '../../components/Flash'
 import { PERSONA_LABEL } from '../../domain/personas'
+import { INSTRUMENT_LABEL, PRECEDENCE_POLICY_NOTE } from '../../domain/legal'
 import { useAppContext } from '../../context/AppContext'
 import { formatDate, formatUsd } from '../../util/format'
 
@@ -137,10 +138,22 @@ export function DealScreening() {
           </span>
         </div>
         <div>
+          <span className="text-[var(--color-ink-muted)]">Structure tags </span>
+          <span className="font-medium">
+            {deal.structureTags?.length
+              ? deal.structureTags.join(', ')
+              : 'None'}
+          </span>
+        </div>
+        <div>
           <span className="text-[var(--color-ink-muted)]">Stage </span>
           <Badge tone="neutral">{deal.pipelineStage}</Badge>
         </div>
       </div>
+
+      <Card title="Instrument precedence" subtitle="How overlapping LPA / side letter / ERISA / MFN terms are ordered for mock screening." className="mb-6">
+        <p className="text-sm text-[var(--color-ink-muted)]">{PRECEDENCE_POLICY_NOTE}</p>
+      </Card>
 
       {run ? (
         <Card
@@ -232,7 +245,7 @@ export function DealScreening() {
 
         <Card
           title="Why blocked / review"
-          subtitle="Drill-down cites structured restriction IDs."
+          subtitle="Citations include instrument type, precedence rank, and link to source document."
           className="lg:col-span-2"
         >
           {selected ? (
@@ -267,6 +280,18 @@ export function DealScreening() {
                           <Badge tone="neutral" className="font-mono">
                             {h.restrictionId}
                           </Badge>
+                          <Badge tone="accent">
+                            {INSTRUMENT_LABEL[h.instrumentKind]}
+                          </Badge>
+                          <Badge tone="neutral" className="font-mono text-[10px]">
+                            rank {h.precedenceRank}
+                          </Badge>
+                          <Link
+                            className="text-xs font-medium text-[var(--color-accent)] hover:underline"
+                            to={`/instruments/${h.legalDocumentId}`}
+                          >
+                            {h.instrumentTitle}
+                          </Link>
                           {r ? (
                             <>
                               <Badge tone="neutral">{r.category}</Badge>
@@ -289,7 +314,8 @@ export function DealScreening() {
                         </p>
                         {r ? (
                           <p className="mt-1 text-xs text-[var(--color-ink-muted)]">
-                            Side letter clause: {r.summary}
+                            Clause text: {r.summary}
+                            {r.sectionRef ? ` (${r.sectionRef})` : ''}
                           </p>
                         ) : null}
                       </li>

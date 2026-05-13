@@ -3,16 +3,19 @@ import { Link, useParams } from 'react-router-dom'
 import { api } from '../../api/client'
 import type {
   ExtractedRestriction,
+  LegalDocument,
   LimitedPartner,
-  SideLetterDocument,
+  Obligation,
 } from '../../domain/types'
+import { INSTRUMENT_LABEL } from '../../domain/legal'
 import { Badge, Card, EmptyState, PageHeader } from '../../components/ui'
 import { formatUsd } from '../../util/format'
 
 export function LpDetail() {
   const { lpId } = useParams<{ lpId: string }>()
   const [lp, setLp] = useState<LimitedPartner | null>(null)
-  const [letters, setLetters] = useState<SideLetterDocument[]>([])
+  const [instruments, setInstruments] = useState<LegalDocument[]>([])
+  const [openObligations, setOpenObligations] = useState<Obligation[]>([])
   const [rest, setRest] = useState<ExtractedRestriction[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -20,15 +23,29 @@ export function LpDetail() {
     if (!lpId) return
     let m = true
     ;(async () => {
-      const [p, sl, r] = await Promise.all([
+      const [p, docs, r, ob] = await Promise.all([
         api.getLp(lpId),
-        api.listSideLetters(),
+        api.listLegalDocuments(),
         api.restrictionsForLp(lpId),
+        api.listObligations(),
       ])
       if (!m) return
       setLp(p ?? null)
-      setLetters(sl.filter((x) => x.lpId === lpId))
+      setInstruments(
+        docs.filter(
+          (d) =>
+            d.lpId === lpId ||
+            (d.lpId === null && ['lpa', 'ima'].includes(d.kind)),
+        ),
+      )
       setRest(r)
+      setOpenObligations(
+        ob.filter(
+          (o) =>
+            (o.lpId === lpId || o.lpId === null) &&
+            (o.status === 'open' || o.status === 'overdue'),
+        ),
+      )
       setLoading(false)
     })()
     return () => {
@@ -77,22 +94,54 @@ export function LpDetail() {
           </dl>
         </Card>
 
-        <Card title="Documents">
-          {letters.length === 0 ? (
-            <EmptyState title="No documents" hint="Upload a side letter to begin extraction." />
+        <Card title="Open obligations (LP + fund-wide)">
+          {openObligations.length === 0 ? (
+            <EmptyState title="No open items" hint="Registry tracks consents, notices, MFN windows, ERISA tasks." />
+          ) : (
+            <ul className="space-y-2 text-sm">
+              {openObligations.slice(0, 5).map((o) => (
+                <li key={o.id}>
+                  <Link
+                    className="font-medium text-[var(--color-accent)] hover:underline"
+                    to="/obligations"
+                  >
+                    {o.title}
+                  </Link>
+                  <span className="text-[var(--color-ink-muted)]">
+                    {' '}
+                    · {o.ownerRole}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <Link
+            className="mt-4 inline-block text-sm font-medium text-[var(--color-accent)] hover:underline"
+            to="/obligations"
+          >
+            Full obligation registry
+          </Link>
+        </Card>
+
+        <Card title="Legal instruments" className="lg:col-span-2">
+          {instruments.length === 0 ? (
+            <EmptyState title="No instruments linked" hint="LPA/IMA apply fund-wide; LP-specific docs attach here." />
           ) : (
             <ul className="space-y-3">
-              {letters.map((doc) => (
+              {instruments.map((doc) => (
                 <li
                   key={doc.id}
                   className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--color-border)] px-3 py-2"
                 >
-                  <Link
-                    className="font-medium text-[var(--color-accent)] hover:underline"
-                    to={`/side-letters/${doc.id}`}
-                  >
-                    {doc.title}
-                  </Link>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Link
+                      className="font-medium text-[var(--color-accent)] hover:underline"
+                      to={`/instruments/${doc.id}`}
+                    >
+                      {doc.title}
+                    </Link>
+                    <Badge tone="accent">{INSTRUMENT_LABEL[doc.kind]}</Badge>
+                  </div>
                   <ReviewBadge status={doc.reviewStatus} />
                 </li>
               ))}
@@ -103,11 +152,11 @@ export function LpDetail() {
             className="mt-4 w-full rounded-lg border border-dashed border-[var(--color-border)] py-2 text-sm font-medium text-[var(--color-ink-muted)]"
             disabled
           >
-            Drag & drop PDF (stub)
+            Upload instrument PDF (stub)
           </button>
         </Card>
 
-        <Card title="Active restrictions (catalog)" className="lg:col-span-2">
+        <Card title="Active restriction facts (screening)" className="lg:col-span-2">
           {rest.length === 0 ? (
             <EmptyState title="No extracted restrictions yet" />
           ) : (
@@ -115,8 +164,8 @@ export function LpDetail() {
               <table className="min-w-full text-left text-sm">
                 <thead>
                   <tr className="border-b border-[var(--color-border)] text-[var(--color-ink-muted)]">
-                    <th className="pb-2 pr-4 font-medium">Category</th>
-                    <th className="pb-2 pr-4 font-medium">Severity</th>
+                    <th className="pb-2 pr-4 font-medium">Instrument</th>
+                    <th className="pb-2 pr-4 font-medium">Rank</th>
                     <th className="pb-2 pr-4 font-medium">Review</th>
                     <th className="pb-2 font-medium">Summary</th>
                   </tr>
@@ -124,8 +173,10 @@ export function LpDetail() {
                 <tbody className="divide-y divide-[var(--color-border)]">
                   {rest.map((r) => (
                     <tr key={r.id}>
-                      <td className="py-2 pr-4 capitalize">{r.category}</td>
-                      <td className="py-2 pr-4 capitalize">{r.severity}</td>
+                      <td className="py-2 pr-4">
+                        <Badge tone="neutral">{INSTRUMENT_LABEL[r.instrumentKind]}</Badge>
+                      </td>
+                      <td className="py-2 pr-4 font-mono text-xs">{r.precedenceRank}</td>
                       <td className="py-2 pr-4">
                         <Badge tone={r.reviewStatus === 'confirmed' ? 'success' : 'warning'}>
                           {r.reviewStatus}
@@ -153,11 +204,9 @@ export function LpDetail() {
 function ReviewBadge({
   status,
 }: {
-  status: SideLetterDocument['reviewStatus']
+  status: LegalDocument['reviewStatus']
 }) {
-  if (status === 'confirmed')
-    return <Badge tone="success">Confirmed</Badge>
-  if (status === 'extracted')
-    return <Badge tone="warning">Extracted — review</Badge>
+  if (status === 'confirmed') return <Badge tone="success">Confirmed</Badge>
+  if (status === 'extracted') return <Badge tone="warning">Extracted</Badge>
   return <Badge tone="neutral">Processing</Badge>
 }

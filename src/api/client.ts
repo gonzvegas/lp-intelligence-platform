@@ -5,7 +5,9 @@ import type {
   Deal,
   ExtractedRestriction,
   IntegrationStatus,
+  LegalDocument,
   LimitedPartner,
+  Obligation,
   ReportJob,
   Role,
   ScreeningRun,
@@ -36,11 +38,29 @@ export const api = {
     return delay(handlers.getLpById(id))
   },
 
+  listLegalDocuments(): Promise<LegalDocument[]> {
+    return delay(handlers.listLegalDocuments())
+  },
+  getLegalDocument(id: string): Promise<LegalDocument | undefined> {
+    return delay(handlers.getLegalDocumentById(id))
+  },
+
   listSideLetters(): Promise<SideLetterDocument[]> {
     return delay(handlers.listSideLetters())
   },
-  getSideLetter(id: string): Promise<SideLetterDocument | undefined> {
-    return delay(handlers.getSideLetterById(id))
+  getSideLetter(id: string): Promise<LegalDocument | undefined> {
+    return delay(handlers.getLegalDocumentById(id))
+  },
+
+  listObligations(): Promise<Obligation[]> {
+    return delay(handlers.listObligations())
+  },
+
+  completeObligation(
+    id: string,
+    actor: string,
+  ): Promise<Obligation | null> {
+    return delay(handlers.completeObligation(id, actor) ?? null)
   },
 
   listRestrictions(): Promise<ExtractedRestriction[]> {

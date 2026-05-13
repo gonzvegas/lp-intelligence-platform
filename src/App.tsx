@@ -17,8 +17,9 @@ import { SignOffs } from './pages/compliance/SignOffs'
 import { Integrations } from './pages/settings/Integrations'
 import { Roles } from './pages/settings/Roles'
 import { Users } from './pages/settings/Users'
-import { SideLetterDetail } from './pages/sideLetters/SideLetterDetail'
-import { SideLetterList } from './pages/sideLetters/SideLetterList'
+import { InstrumentDetail } from './pages/instruments/InstrumentDetail'
+import { InstrumentList } from './pages/instruments/InstrumentList'
+import { ObligationRegistry } from './pages/ObligationRegistry'
 
 export default function App() {
   return (
@@ -27,8 +28,11 @@ export default function App() {
         <Route index element={<Dashboard />} />
         <Route path="lps" element={<LpList />} />
         <Route path="lps/:lpId" element={<LpDetail />} />
-        <Route path="side-letters" element={<SideLetterList />} />
-        <Route path="side-letters/:id" element={<SideLetterDetail />} />
+        <Route path="instruments" element={<InstrumentList />} />
+        <Route path="instruments/:id" element={<InstrumentDetail />} />
+        <Route path="side-letters" element={<Navigate to="/instruments" replace />} />
+        <Route path="side-letters/:id" element={<InstrumentDetail />} />
+        <Route path="obligations" element={<ObligationRegistry />} />
         <Route path="deals" element={<DealList />} />
         <Route path="deals/:dealId/screening" element={<DealScreening />} />
         <Route path="capacity" element={<CapacityOverview />} />
@@ -38,6 +42,7 @@ export default function App() {
           <Route path="audit" element={<AuditLog />} />
           <Route path="sign-offs" element={<SignOffs />} />
           <Route path="reports" element={<Reports />} />
+          <Route path="obligations" element={<ObligationRegistry />} />
         </Route>
         <Route path="settings/integrations" element={<Integrations />} />
         <Route path="settings/users" element={<Users />} />
