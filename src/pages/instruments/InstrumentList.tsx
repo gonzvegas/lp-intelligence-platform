@@ -3,6 +3,10 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '../../api/client'
 import type { LegalDocument, LegalInstrumentKind, LimitedPartner } from '../../domain/types'
 import { INSTRUMENT_LABEL } from '../../domain/legal'
+import {
+  pipelineStageLabel,
+  resolvePipelineStage,
+} from '../../domain/documentPipeline'
 import { Badge, PageHeader } from '../../components/ui'
 import { formatDate } from '../../util/format'
 import { useAppContext } from '../../context/AppContext'
@@ -100,6 +104,12 @@ export function InstrumentList() {
                   Type
                 </th>
                 <th className="px-4 py-3 font-medium text-[var(--color-ink-muted)]">
+                  Ver
+                </th>
+                <th className="px-4 py-3 font-medium text-[var(--color-ink-muted)]">
+                  Pipeline
+                </th>
+                <th className="px-4 py-3 font-medium text-[var(--color-ink-muted)]">
                   LP / scope
                 </th>
                 <th className="px-4 py-3 font-medium text-[var(--color-ink-muted)]">
@@ -114,7 +124,10 @@ export function InstrumentList() {
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]">
-              {filtered.map((doc) => (
+              {filtered.map((doc) => {
+                const pipe = resolvePipelineStage(doc)
+                const ver = doc.versionNumber ?? 1
+                return (
                 <tr key={doc.id} className="hover:bg-[var(--color-surface-muted)]/60">
                   <td className="px-4 py-3">
                     <Link
@@ -126,6 +139,22 @@ export function InstrumentList() {
                   </td>
                   <td className="px-4 py-3">
                     <Badge tone="accent">{INSTRUMENT_LABEL[doc.kind]}</Badge>
+                  </td>
+                  <td className="px-4 py-3 font-mono text-[var(--color-ink)]">
+                    v{ver}
+                  </td>
+                  <td className="px-4 py-3">
+                    <Badge
+                      tone={
+                        pipe === 'archived'
+                          ? 'neutral'
+                          : pipe === 'active'
+                            ? 'success'
+                            : 'warning'
+                      }
+                    >
+                      {pipelineStageLabel(pipe)}
+                    </Badge>
                   </td>
                   <td className="px-4 py-3 text-[var(--color-ink-muted)]">
                     {doc.lpId === null ? (
@@ -160,7 +189,8 @@ export function InstrumentList() {
                     <StatusBadge status={doc.reviewStatus} />
                   </td>
                 </tr>
-              ))}
+                )
+              })}
             </tbody>
           </table>
         </div>

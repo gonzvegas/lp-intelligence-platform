@@ -18,6 +18,7 @@ import type {
   SectorConcentrationHit,
   SectorConcentrationRule,
   SignOff,
+  SyncJob,
   UserAccount,
 } from '../domain/types'
 import {
@@ -35,6 +36,7 @@ import {
   sectorConcentrationRules,
   sideLetters,
   signOffs,
+  syncJobs,
   users,
 } from './fixtures'
 import { getEffectiveInstrumentOrder } from '../domain/instrumentPrecedenceStorage'
@@ -462,6 +464,43 @@ export function listIntegrations(): IntegrationStatus[] {
   return integrations
 }
 
+export function listSyncJobs(integrationId?: string): SyncJob[] {
+  const rows = [...syncJobs].sort((a, b) => (a.finishedAt < b.finishedAt ? 1 : -1))
+  return integrationId ? rows.filter((j) => j.integrationId === integrationId) : rows
+}
+
+export function runIntegrationSyncDemo(integrationId: string): SyncJob | null {
+  const integ = integrations.find((i) => i.id === integrationId)
+  if (!integ || !integ.connected) return null
+  const now = new Date().toISOString()
+  const success = integrationId === 'int-dc'
+  const job: SyncJob = {
+    id: `sync-${Date.now()}`,
+    integrationId,
+    startedAt: now,
+    finishedAt: now,
+    status: success ? 'success' : 'partial',
+    message: success
+      ? 'Delta sync (demo): reconciled deals, LPs, and legal catalog; duplicate LPA digest skipped — v2 already active.'
+      : 'No new files in gateway inbox; connector healthy.',
+    documentsUpserted: success ? 1 : 0,
+    restrictionsTouched: success ? 3 : 0,
+  }
+  syncJobs.unshift(job)
+  integ.lastSyncAt = now
+  integ.lastSyncStatus = job.status === 'success' ? 'success' : 'partial'
+  integ.lastSyncDetail = job.message
+  appendAuditEvent({
+    at: now,
+    actor: integ.name,
+    persona: 'admin',
+    type: 'sync_job_completed',
+    summary: `${job.message} (job ${job.id})`,
+    entityRef: job.id,
+  })
+  return job
+}
+
 export function listUsers(): UserAccount[] {
   return users
 }
@@ -612,6 +651,14 @@ export function toggleIntegration(id: string): IntegrationStatus | undefined {
   const row = integrations.find((i) => i.id === id)
   if (!row) return undefined
   row.connected = !row.connected
-  row.lastSyncAt = row.connected ? new Date().toISOString() : undefined
+  if (row.connected) {
+    row.lastSyncAt = new Date().toISOString()
+    row.lastSyncStatus = 'idle'
+    row.lastSyncDetail = 'Connected — run a sync to pull latest.'
+  } else {
+    row.lastSyncAt = undefined
+    row.lastSyncStatus = 'idle'
+    row.lastSyncDetail = 'Disconnected.'
+  }
   return row
 }

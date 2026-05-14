@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { CheckCircle2, FileText } from 'lucide-react'
 import { api } from '../../api/client'
 import type {
+  AuditEvent,
   ExtractedRestriction,
   LegalDocument,
   Obligation,
@@ -15,6 +16,13 @@ import { Badge, Button, Card, EmptyState, PageHeader } from '../../components/ui
 import { useFlash } from '../../components/Flash'
 import { can } from '../../domain/access'
 import { useAppContext } from '../../context/AppContext'
+import {
+  ingestionSourceLabel,
+  PIPELINE_STEPS_EXCLUDING_ARCHIVED,
+  pipelineStageLabel,
+  pipelineStepIndex,
+  resolvePipelineStage,
+} from '../../domain/documentPipeline'
 import { formatDate } from '../../util/format'
 
 export function InstrumentDetail() {
@@ -25,21 +33,25 @@ export function InstrumentDetail() {
   const [doc, setDoc] = useState<LegalDocument | null>(null)
   const [rest, setRest] = useState<ExtractedRestriction[]>([])
   const [obls, setObls] = useState<Obligation[]>([])
+  const [docAudits, setDocAudits] = useState<AuditEvent[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     if (!id) return
     let m = true
+    setLoading(true)
     ;(async () => {
-      const [d, allR, allO] = await Promise.all([
+      const [d, allR, allO, audits] = await Promise.all([
         api.getLegalDocument(id),
         api.listRestrictions(),
         api.listObligations(),
+        api.listAuditEvents(),
       ])
       if (!m) return
       setDoc(d ?? null)
       setRest(allR.filter((r) => r.legalDocumentId === id))
       setObls(allO.filter((o) => o.legalDocumentId === id))
+      setDocAudits(audits.filter((e) => e.entityRef === id))
       setLoading(false)
     })()
     return () => {
@@ -67,12 +79,102 @@ export function InstrumentDetail() {
       />
     )
 
+  const ver = doc.versionNumber ?? 1
+  const effective = doc.effectiveFrom ? formatDate(doc.effectiveFrom) : formatDate(doc.uploadedAt)
+  const pipe = resolvePipelineStage(doc)
+  const pipeIdx = pipelineStepIndex(pipe)
+
   return (
     <div>
       <PageHeader
         title={doc.title}
-        description={`${INSTRUMENT_LABEL[doc.kind]} · uploaded ${formatDate(doc.uploadedAt)} · structured clauses split into screening facts and operating obligations.`}
+        description={`${INSTRUMENT_LABEL[doc.kind]} · version ${ver} · effective ${effective} · ${ingestionSourceLabel(doc.ingestionSource)} · uploaded ${formatDate(doc.uploadedAt)}.`}
       />
+
+      <Card title="Governance & versioning" className="mb-6">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <dl className="space-y-2 text-sm">
+            <div className="flex flex-wrap justify-between gap-2">
+              <dt className="text-[var(--color-ink-muted)]">Catalog version</dt>
+              <dd className="font-semibold text-[var(--color-ink)]">v{ver}</dd>
+            </div>
+            <div className="flex flex-wrap justify-between gap-2">
+              <dt className="text-[var(--color-ink-muted)]">Effective for policy</dt>
+              <dd className="font-medium text-[var(--color-ink)]">{effective}</dd>
+            </div>
+            <div className="flex flex-wrap justify-between gap-2">
+              <dt className="text-[var(--color-ink-muted)]">Ingestion</dt>
+              <dd className="text-[var(--color-ink)]">{ingestionSourceLabel(doc.ingestionSource)}</dd>
+            </div>
+            <div className="flex flex-wrap justify-between gap-2">
+              <dt className="text-[var(--color-ink-muted)]">Pipeline stage</dt>
+              <dd>
+                <Badge tone={pipe === 'archived' ? 'neutral' : pipe === 'active' ? 'success' : 'warning'}>
+                  {pipelineStageLabel(pipe)}
+                </Badge>
+              </dd>
+            </div>
+          </dl>
+          <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-muted)]/40 p-3 text-sm text-[var(--color-ink-muted)]">
+            {doc.supersedesDocumentId ? (
+              <p>
+                <span className="font-medium text-[var(--color-ink)]">Supersedes: </span>
+                <Link className="text-[var(--color-accent)] hover:underline" to={`/instruments/${doc.supersedesDocumentId}`}>
+                  Open prior version
+                </Link>
+              </p>
+            ) : (
+              <p>Original filing — no prior version in catalog.</p>
+            )}
+            {doc.replacedByDocumentId ? (
+              <p className="mt-2">
+                <span className="font-medium text-[var(--color-ink)]">Superseded by: </span>
+                <Link className="text-[var(--color-accent)] hover:underline" to={`/instruments/${doc.replacedByDocumentId}`}>
+                  Open newer version
+                </Link>
+              </p>
+            ) : (
+              <p className="mt-2">This is the latest catalog row for this instrument family.</p>
+            )}
+            <p className="mt-3 text-xs">
+              Screening and obligations pin to <strong>document id</strong> and <strong>extracted clause version</strong> stamps
+              below so IC can explain which text produced each rule.
+            </p>
+          </div>
+        </div>
+      </Card>
+
+      <Card title="Document & restriction pipeline" className="mb-6">
+        {pipe === 'archived' ? (
+          <p className="text-sm text-[var(--color-ink-muted)]">
+            Archived version — excluded from active rulepack. Use the newer LPA link above for governing text.
+          </p>
+        ) : (
+          <div className="flex flex-wrap items-center gap-2">
+            {PIPELINE_STEPS_EXCLUDING_ARCHIVED.map((step, i) => {
+              const done = pipeIdx >= i
+              return (
+                <div key={step} className="flex items-center gap-2">
+                  {i > 0 ? <span className="text-[var(--color-border)]">→</span> : null}
+                  <span
+                    className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                      done
+                        ? 'bg-[var(--color-accent-muted)] text-[var(--color-accent)]'
+                        : 'bg-[var(--color-surface-muted)] text-[var(--color-ink-muted)]'
+                    }`}
+                  >
+                    {pipelineStageLabel(step)}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        )}
+        <p className="mt-3 text-xs text-[var(--color-ink-muted)]">
+          Extraction assigns each clause a batch id (see restrictions). Legal confirmation promotes rows to screening;
+          DealCloud sync can bump document versions with full audit.
+        </p>
+      </Card>
 
       <Card title="Precedence policy (organizational default)" className="mb-6">
         <p className="text-sm text-[var(--color-ink-muted)]">{PRECEDENCE_POLICY_NOTE}</p>
@@ -162,6 +264,16 @@ export function InstrumentDetail() {
                         ? 'Extracted'
                         : 'Confirmed by Compliance'}
                     </Badge>
+                    {r.documentVersionNumber != null ? (
+                      <Badge tone="neutral" className="text-[10px]">
+                        Clause ↔ doc v{r.documentVersionNumber}
+                      </Badge>
+                    ) : null}
+                    {r.extractionBatchId ? (
+                      <Badge tone="neutral" className="font-mono text-[10px]">
+                        {r.extractionBatchId}
+                      </Badge>
+                    ) : null}
                   </div>
                   {r.sectionRef ? (
                     <p className="mt-2 text-xs text-[var(--color-ink-muted)]">
@@ -226,6 +338,33 @@ export function InstrumentDetail() {
               Open full obligation registry
             </Link>
           </div>
+        </Card>
+
+        <Card title="Audit — this instrument" className="lg:col-span-3">
+          {docAudits.length === 0 ? (
+            <p className="text-sm text-[var(--color-ink-muted)]">
+              No audit events reference this document id (`{doc.id}`) yet. Upload, versioning, and pipeline changes
+              appear here with full actor and timestamp.
+            </p>
+          ) : (
+            <ol className="space-y-4 border-l border-[var(--color-border)] ps-4">
+              {docAudits.map((e) => (
+                <li key={e.id} className="text-sm">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge tone="neutral">{formatDate(e.at)}</Badge>
+                    <Badge tone="accent">{e.type.replaceAll('_', ' ')}</Badge>
+                  </div>
+                  <p className="mt-1 font-medium text-[var(--color-ink)]">{e.summary}</p>
+                  <p className="mt-0.5 text-xs text-[var(--color-ink-muted)]">Actor: {e.actor}</p>
+                </li>
+              ))}
+            </ol>
+          )}
+          <p className="mt-4 text-xs text-[var(--color-ink-muted)]">
+            <Link className="font-medium text-[var(--color-accent)] hover:underline" to="/compliance/audit">
+              Compliance → full audit log
+            </Link>
+          </p>
         </Card>
       </div>
 

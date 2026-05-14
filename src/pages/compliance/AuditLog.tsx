@@ -25,7 +25,7 @@ export function AuditLog() {
     <div>
       <PageHeader
         title="Audit log"
-        description="Append-only timeline capturing screening runs, restriction confirmations, sign-offs, and integrations."
+        description="Append-only timeline: screening, restriction confirmations, document versioning, pipeline transitions, integration sync jobs, and sign-offs — with actor and entity references."
         actions={
           <button
             type="button"

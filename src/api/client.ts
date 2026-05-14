@@ -16,6 +16,7 @@ import type {
   SectorConcentrationRule,
   SideLetterDocument,
   SignOff,
+  SyncJob,
   UserAccount,
 } from '../domain/types'
 import {
@@ -123,6 +124,12 @@ function mapDocument(r: any): LegalDocument {
     uploadedAt: r.uploaded_at,
     reviewStatus: r.status === 'needs_review' ? 'extracted' : r.status === 'confirmed' ? 'confirmed' : 'processing',
     restrictionIds: [],
+    versionNumber: r.version_number ?? undefined,
+    supersedesDocumentId: r.supersedes_document_id ?? undefined,
+    replacedByDocumentId: r.replaced_by_document_id ?? undefined,
+    effectiveFrom: r.effective_from ?? undefined,
+    ingestionSource: r.ingestion_source ?? undefined,
+    pipelineStage: r.pipeline_stage ?? undefined,
   }
 }
 
@@ -141,6 +148,8 @@ function mapRestriction(r: any): ExtractedRestriction {
     rawQuote: r.clause_text ?? undefined,
     effectiveFrom: r.created_at ?? new Date().toISOString(),
     reviewStatus: r.review_status ?? 'draft',
+    documentVersionNumber: r.document_version_number ?? undefined,
+    extractionBatchId: r.extraction_batch_id ?? undefined,
   }
 }
 
@@ -175,11 +184,16 @@ function mapAllocation(r: any): Allocation {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function mapIntegration(r: any): IntegrationStatus {
+  const p = r.provider as string | undefined
+  const pretty =
+    p && p.length > 0 ? p.charAt(0).toUpperCase() + p.slice(1) : ''
   return {
     id: r.id,
-    name: r.provider.charAt(0).toUpperCase() + r.provider.slice(1),
+    name: pretty || (r.name as string) || '',
     connected: r.connected,
     lastSyncAt: r.last_sync_at ?? undefined,
+    lastSyncStatus: r.last_sync_status ?? undefined,
+    lastSyncDetail: r.last_sync_detail ?? undefined,
   }
 }
 
@@ -497,6 +511,17 @@ export const api = {
 
   toggleIntegration(id: string): Promise<IntegrationStatus | null> {
     return delay(handlers.toggleIntegration(id) ?? null)
+  },
+
+  async listSyncJobs(integrationId?: string): Promise<SyncJob[]> {
+    if (USE_MOCKS) return delay(handlers.listSyncJobs(integrationId))
+    const rows = await get<unknown[]>('/integrations/sync-jobs', { integration_id: integrationId })
+    return rows as SyncJob[]
+  },
+
+  async runIntegrationSyncDemo(integrationId: string): Promise<SyncJob | null> {
+    if (USE_MOCKS) return delay(handlers.runIntegrationSyncDemo(integrationId))
+    return null
   },
 
   // --- Everything below stays on mocks until Phase 6 ---

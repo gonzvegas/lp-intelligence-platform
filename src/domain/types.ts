@@ -37,6 +37,17 @@ export type LegalInstrumentKind =
   | 'ima'
   | 'co_invest'
 
+/** Stages for ingestion → extraction → legal sign-off → governing version. */
+export type DocumentPipelineStage =
+  | 'uploaded'
+  | 'parsing'
+  | 'extracted'
+  | 'legal_review'
+  | 'active'
+  | 'archived'
+
+export type DocumentIngestionSource = 'manual' | 'dealcloud' | 'csv_import'
+
 export interface LegalDocument {
   id: string
   fundId: string
@@ -49,6 +60,15 @@ export interface LegalDocument {
   uploadedAt: string
   reviewStatus: 'processing' | 'extracted' | 'confirmed'
   restrictionIds: string[]
+  /** Version for this instrument chain (v1, v2 …). */
+  versionNumber?: number
+  supersedesDocumentId?: string | null
+  replacedByDocumentId?: string | null
+  /** ISO date — when this version is treated as the governing text. */
+  effectiveFrom?: string
+  ingestionSource?: DocumentIngestionSource
+  /** When omitted, UI infers from `reviewStatus`. */
+  pipelineStage?: DocumentPipelineStage
 }
 
 /** @deprecated Use LegalDocument — identical shape */
@@ -84,6 +104,10 @@ export interface ExtractedRestriction {
   effectiveTo?: string
   clauseText?: string
   reviewStatus: 'draft' | 'confirmed' | 'rejected'
+  /** Denormalized from parent document version at extraction time. */
+  documentVersionNumber?: number
+  /** Pipeline / sync batch that produced this row (traceability). */
+  extractionBatchId?: string
 }
 
 export interface Deal {
@@ -235,6 +259,9 @@ export type AuditEventType =
   | 'document_upload'
   | 'integration_sync'
   | 'obligation_completed'
+  | 'sync_job_completed'
+  | 'document_versioned'
+  | 'pipeline_stage_changed'
 
 export interface AuditEvent {
   id: string
@@ -268,6 +295,22 @@ export interface IntegrationStatus {
   name: string
   connected: boolean
   lastSyncAt?: string
+  /** Outcome of the most recent completed sync job. */
+  lastSyncStatus?: 'success' | 'partial' | 'failed' | 'idle'
+  /** Human-readable detail for IC / ops (counts, conflicts). */
+  lastSyncDetail?: string
+}
+
+/** One integration run — shown for transparency (“what did sync do?”). */
+export interface SyncJob {
+  id: string
+  integrationId: string
+  startedAt: string
+  finishedAt: string
+  status: 'success' | 'partial' | 'failed'
+  message: string
+  documentsUpserted: number
+  restrictionsTouched: number
 }
 
 export interface UserAccount {

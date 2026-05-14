@@ -12,6 +12,7 @@ import type {
   Role,
   SectorConcentrationRule,
   SignOff,
+  SyncJob,
   UserAccount,
 } from '../domain/types'
 
@@ -53,6 +54,23 @@ export const limitedPartners: LimitedPartner[] = [
 /** All governed instruments: LPA, IMA, side letters, ERISA, MFN, co-invest. */
 export const legalDocuments: LegalDocument[] = [
   {
+    id: 'lpa-1-v1',
+    fundId: 'fund-1',
+    lpId: null,
+    dealId: null,
+    kind: 'lpa',
+    title: 'LPA — Comvest Credit Partners IV (Dec 2023 restatement — superseded)',
+    uploadedAt: '2023-12-15T10:00:00Z',
+    reviewStatus: 'confirmed',
+    restrictionIds: [],
+    versionNumber: 1,
+    supersedesDocumentId: null,
+    replacedByDocumentId: 'lpa-1',
+    effectiveFrom: '2023-12-15',
+    ingestionSource: 'manual',
+    pipelineStage: 'archived',
+  },
+  {
     id: 'lpa-1',
     fundId: 'fund-1',
     lpId: null,
@@ -62,6 +80,12 @@ export const legalDocuments: LegalDocument[] = [
     uploadedAt: '2024-02-01T12:00:00Z',
     reviewStatus: 'confirmed',
     restrictionIds: ['r-lpa-affiliate'],
+    versionNumber: 2,
+    supersedesDocumentId: 'lpa-1-v1',
+    replacedByDocumentId: null,
+    effectiveFrom: '2024-02-01',
+    ingestionSource: 'dealcloud',
+    pipelineStage: 'active',
   },
   {
     id: 'ima-1',
@@ -73,6 +97,12 @@ export const legalDocuments: LegalDocument[] = [
     uploadedAt: '2024-02-01T12:00:00Z',
     reviewStatus: 'confirmed',
     restrictionIds: [],
+    versionNumber: 1,
+    supersedesDocumentId: null,
+    replacedByDocumentId: null,
+    effectiveFrom: '2024-02-01',
+    ingestionSource: 'manual',
+    pipelineStage: 'active',
   },
   {
     id: 'sl-1',
@@ -95,6 +125,12 @@ export const legalDocuments: LegalDocument[] = [
     uploadedAt: '2024-03-13T10:00:00Z',
     reviewStatus: 'extracted',
     restrictionIds: ['r-erisa-pt'],
+    versionNumber: 1,
+    supersedesDocumentId: null,
+    replacedByDocumentId: null,
+    effectiveFrom: '2024-03-13',
+    ingestionSource: 'dealcloud',
+    pipelineStage: 'extracted',
   },
   {
     id: 'sl-2',
@@ -139,6 +175,12 @@ export const legalDocuments: LegalDocument[] = [
     uploadedAt: '2026-05-02T11:10:00Z',
     reviewStatus: 'processing',
     restrictionIds: [],
+    versionNumber: 1,
+    supersedesDocumentId: null,
+    replacedByDocumentId: null,
+    effectiveFrom: '2026-05-02',
+    ingestionSource: 'csv_import',
+    pipelineStage: 'parsing',
   },
   {
     id: 'coinv-deal1',
@@ -238,6 +280,8 @@ export const restrictions: ExtractedRestriction[] = [
     sectionRef: 'LPA § 7.4',
     effectiveFrom: '2024-02-01',
     reviewStatus: 'confirmed',
+    documentVersionNumber: 2,
+    extractionBatchId: 'dc-sync-2026-02-01-lpa',
   },
   {
     id: 'r-1',
@@ -280,6 +324,8 @@ export const restrictions: ExtractedRestriction[] = [
     sectionRef: 'ERISA SL § 3',
     effectiveFrom: '2024-03-13',
     reviewStatus: 'draft',
+    documentVersionNumber: 1,
+    extractionBatchId: 'nlp-erisa-20240313-a7',
   },
   {
     id: 'r-3',
@@ -663,6 +709,25 @@ export const auditEvents: AuditEvent[] = [
     entityRef: 'sl-4',
   },
   {
+    id: 'ae-lpa-version',
+    at: '2024-02-01T14:00:00Z',
+    actor: 'Morgan Patel',
+    persona: 'legal',
+    type: 'document_versioned',
+    summary:
+      'Governed LPA advanced to v2 (Feb 2024 executed). Prior restatement (v1) archived — screening rulepack pins to lpa-1 / v2.',
+    entityRef: 'lpa-1',
+  },
+  {
+    id: 'ae-pipeline-erisa',
+    at: '2024-03-14T09:00:00Z',
+    actor: 'System — document pipeline',
+    persona: 'admin',
+    type: 'pipeline_stage_changed',
+    summary: 'ERISA side letter extraction completed; stage moved to Extracted (awaiting Legal confirmation).',
+    entityRef: 'erisa-alpha',
+  },
+  {
     id: 'ae-5',
     at: '2026-05-08T07:55:00Z',
     actor: 'Integration — DealCloud',
@@ -670,6 +735,16 @@ export const auditEvents: AuditEvent[] = [
     type: 'integration_sync',
     summary: 'Deal pipeline delta sync completed (42 records).',
     entityRef: 'dealcloud',
+  },
+  {
+    id: 'ae-sync-20260512',
+    at: '2026-05-12T07:55:41Z',
+    actor: 'DealCloud',
+    persona: 'admin',
+    type: 'sync_job_completed',
+    summary:
+      'Sync job sync-20260512-dc: success — 6 documents upserted, 12 restriction rows reconciled (see Integrations).',
+    entityRef: 'sync-20260512-dc',
   },
 ]
 
@@ -710,9 +785,65 @@ export const reportJobs: ReportJob[] = [
 ]
 
 export const integrations: IntegrationStatus[] = [
-  { id: 'int-dc', name: 'DealCloud', connected: true, lastSyncAt: '2026-05-12T07:55:00Z' },
-  { id: 'int-sf', name: 'Salesforce', connected: false },
-  { id: 'int-csv', name: 'Manual CSV import', connected: true, lastSyncAt: '2026-05-01T12:00:00Z' },
+  {
+    id: 'int-dc',
+    name: 'DealCloud',
+    connected: true,
+    lastSyncAt: '2026-05-12T07:55:00Z',
+    lastSyncStatus: 'success',
+    lastSyncDetail:
+      'Delta sync: 142 deals, 28 LPs, 6 instruments. LPA v2 hash verified. 0 open conflicts.',
+  },
+  {
+    id: 'int-sf',
+    name: 'Salesforce',
+    connected: false,
+    lastSyncStatus: 'idle',
+    lastSyncDetail: 'Connect to pull investor contacts (optional).',
+  },
+  {
+    id: 'int-csv',
+    name: 'Manual CSV import',
+    connected: true,
+    lastSyncAt: '2026-05-01T12:00:00Z',
+    lastSyncStatus: 'partial',
+    lastSyncDetail: 'Inbox empty — last file processed LP roster + 1 draft side letter (sl-4).',
+  },
+]
+
+export const syncJobs: SyncJob[] = [
+  {
+    id: 'sync-20260512-dc',
+    integrationId: 'int-dc',
+    startedAt: '2026-05-12T07:50:18Z',
+    finishedAt: '2026-05-12T07:55:41Z',
+    status: 'success',
+    message:
+      'DealCloud API: 142 deals touched, 28 LPs, 6 legal documents. Restrictions reconciled against v2 LPA + ERISA letter.',
+    documentsUpserted: 6,
+    restrictionsTouched: 12,
+  },
+  {
+    id: 'sync-20260508-dc',
+    integrationId: 'int-dc',
+    startedAt: '2026-05-08T06:12:00Z',
+    finishedAt: '2026-05-08T06:14:22Z',
+    status: 'partial',
+    message:
+      '1 conflict: Delta side letter hash mismatch — Legal notified; screening held for lp-4 until sl-4 confirmed.',
+    documentsUpserted: 1,
+    restrictionsTouched: 0,
+  },
+  {
+    id: 'sync-20260501-csv',
+    integrationId: 'int-csv',
+    startedAt: '2026-05-01T12:00:00Z',
+    finishedAt: '2026-05-01T12:00:04Z',
+    status: 'success',
+    message: 'Queued import batch committed — LP commitments refreshed.',
+    documentsUpserted: 0,
+    restrictionsTouched: 0,
+  },
 ]
 
 export const roles: Role[] = [
