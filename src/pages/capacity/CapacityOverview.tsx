@@ -3,19 +3,22 @@ import { Link } from 'react-router-dom'
 import { api } from '../../api/client'
 import type { CapacitySnapshot, LimitedPartner } from '../../domain/types'
 import { PageHeader } from '../../components/ui'
+import { useAppContext } from '../../context/AppContext'
 import { formatUsd } from '../../util/format'
 import { cx } from '../../util/cx'
 
 type RowData = { lp: LimitedPartner; snap: CapacitySnapshot | null }
 
 export function CapacityOverview() {
+  const { fundId } = useAppContext()
   const [rows, setRows] = useState<RowData[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     let m = true
+    setLoading(true)
     ;(async () => {
-      const lps = await api.listLPs()
+      const lps = await api.listLPs(fundId)
       if (!m) return
       const snaps = await Promise.all(lps.map((lp) => api.capacitySnapshot(lp.id)))
       if (!m) return
@@ -23,7 +26,7 @@ export function CapacityOverview() {
       setLoading(false)
     })()
     return () => { m = false }
-  }, [])
+  }, [fundId])
 
   const totalCommitment = rows.reduce((s, r) => s + r.lp.commitmentUsd, 0)
   const totalCalled = rows.reduce((s, r) => s + r.lp.fundedUsd, 0)
@@ -34,7 +37,7 @@ export function CapacityOverview() {
     <div>
       <PageHeader
         title="Capacity Management"
-        description="Total committed capital versus deployed exposure across all LPs."
+        description="Total committed capital versus deployed exposure for LPs in the selected fund."
       />
 
       {/* Top-level stat strip */}
@@ -43,7 +46,7 @@ export function CapacityOverview() {
           <StatCard
             label="Total commitments"
             value={formatUsd(totalCommitment)}
-            sub="Capital pledged by all LPs"
+            sub="Capital pledged by LPs in this fund"
           />
           <StatCard
             label="Called capital"

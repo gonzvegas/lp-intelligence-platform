@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { Check, ChevronDown, ChevronUp, Pencil, Plus, ThumbsDown, ThumbsUp, Trash2, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronUp, Pencil, Plus, ThumbsDown, ThumbsUp, Trash2, Upload, X } from 'lucide-react'
 import { api } from '../../api/client'
 import { InstrumentOrderList } from '../../components/InstrumentOrderList'
 import type {
@@ -13,6 +13,7 @@ import type {
 } from '../../domain/types'
 import { INSTRUMENT_LABEL } from '../../domain/legal'
 import { Badge, Button, Card, EmptyState, PageHeader } from '../../components/ui'
+import { BulkImportHoldingsModal } from '../../components/BulkImportHoldingsModal'
 import { useFlash } from '../../components/Flash'
 import { formatUsd } from '../../util/format'
 
@@ -122,6 +123,7 @@ export function LpDetail() {
   const [commitmentDraft, setCommitmentDraft] = useState({ commitmentUsd: 0, fundedUsd: 0 })
   const [savingCommitment, setSavingCommitment] = useState(false)
   const [showAddHolding, setShowAddHolding] = useState(false)
+  const [showBulkHoldings, setShowBulkHoldings] = useState(false)
   const [removingAlloc, setRemovingAlloc] = useState<string | null>(null)
   const [reviewingRestriction, setReviewingRestriction] = useState<string | null>(null)
   const [expandedRestriction, setExpandedRestriction] = useState<string | null>(null)
@@ -192,6 +194,33 @@ export function LpDetail() {
       m = false
     }
   }, [lp])
+
+  const sectorConcentration = useMemo(() => {
+    if (!lp) {
+      return {
+        rows: [] as { sector: string; amountUsd: number; pctOfCommitment: number }[],
+        commitment: 0,
+        allocatedTotal: 0,
+        unallocatedPct: 0,
+      }
+    }
+    const bySector = new Map<string, number>()
+    for (const a of allocations) {
+      const key = a.sector?.trim() ? a.sector.trim() : 'Uncategorized'
+      bySector.set(key, (bySector.get(key) ?? 0) + a.amountUsd)
+    }
+    const commitment = lp.commitmentUsd
+    const rows = Array.from(bySector.entries())
+      .map(([sector, amountUsd]) => ({
+        sector,
+        amountUsd,
+        pctOfCommitment: commitment > 0 ? (amountUsd / commitment) * 100 : 0,
+      }))
+      .sort((a, b) => b.amountUsd - a.amountUsd)
+    const allocatedTotal = rows.reduce((s, r) => s + r.amountUsd, 0)
+    const unallocatedPct = commitment > 0 ? Math.max(0, 100 - (allocatedTotal / commitment) * 100) : 0
+    return { rows, commitment, allocatedTotal, unallocatedPct }
+  }, [allocations, lp])
 
   async function removeAllocation(allocId: string) {
     setRemovingAlloc(allocId)
@@ -490,16 +519,32 @@ export function LpDetail() {
 
         <Card
           title="Holdings & Allocations"
+          subtitle="Concentration by sector as a share of total committed capital (sum of holding amounts ÷ LP commitment)."
           className="lg:col-span-2"
           actions={
             !showAddHolding ? (
-              <button
-                type="button"
-                onClick={() => setShowAddHolding(true)}
-                className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 text-xs font-medium text-[var(--color-ink-muted)] hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-muted)] hover:text-[var(--color-accent)]"
-              >
-                <Plus size={11} /> Add holding
-              </button>
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAddHolding(false)
+                    setShowBulkHoldings(true)
+                  }}
+                  className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 text-xs font-medium text-[var(--color-ink-muted)] hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-muted)] hover:text-[var(--color-accent)]"
+                >
+                  <Upload size={11} /> Import CSV
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowBulkHoldings(false)
+                    setShowAddHolding(true)
+                  }}
+                  className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 text-xs font-medium text-[var(--color-ink-muted)] hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-muted)] hover:text-[var(--color-accent)]"
+                >
+                  <Plus size={11} /> Add holding
+                </button>
+              </div>
             ) : undefined
           }
         >
@@ -520,11 +565,42 @@ export function LpDetail() {
           {allocations.length === 0 && !showAddHolding ? (
             <EmptyState
               title="No holdings yet"
-              hint="Add portfolio company investments for this LP, or they'll appear automatically after a DealCloud sync."
+              hint="Add holdings manually, import a CSV from the card actions, or sync from DealCloud after integration."
             />
           ) : allocations.length > 0 ? (
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-left text-sm">
+            <>
+              {sectorConcentration.rows.length > 0 && lp && (
+                <div className="mb-4 space-y-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-muted)]/40 px-4 py-3">
+                  <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-ink-muted)]">
+                    By sector (% of {formatUsd(lp.commitmentUsd)} commitment)
+                  </p>
+                  <ul className="space-y-3">
+                    {sectorConcentration.rows.map((row) => (
+                      <li key={row.sector}>
+                        <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2 text-sm">
+                          <span className="font-medium text-[var(--color-ink)]">{row.sector}</span>
+                          <span className="text-[var(--color-ink-muted)]">
+                            {row.pctOfCommitment.toFixed(1)}% · {formatUsd(row.amountUsd)}
+                          </span>
+                        </div>
+                        <div className="h-1.5 overflow-hidden rounded-full bg-[var(--color-border)]">
+                          <div
+                            className="h-full min-w-0 rounded-full bg-[var(--color-accent)]"
+                            style={{ width: `${Math.min(100, row.pctOfCommitment)}%` }}
+                          />
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                  {sectorConcentration.commitment > 0 && sectorConcentration.unallocatedPct > 0.05 ? (
+                    <p className="text-xs text-[var(--color-ink-muted)]">
+                      About {sectorConcentration.unallocatedPct.toFixed(1)}% of committed capital is not represented in listed holding amounts above.
+                    </p>
+                  ) : null}
+                </div>
+              )}
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-left text-sm">
                 <thead>
                   <tr className="border-b border-[var(--color-border)] text-[var(--color-ink-muted)]">
                     <th className="pb-2 pr-4 font-medium">Deal / Company</th>
@@ -558,7 +634,8 @@ export function LpDetail() {
                   ))}
                 </tbody>
               </table>
-            </div>
+              </div>
+            </>
           ) : null}
         </Card>
 
@@ -666,6 +743,18 @@ export function LpDetail() {
           })()}
         </Card>
       </div>
+
+      {showBulkHoldings && lpId ? (
+        <BulkImportHoldingsModal
+          lpId={lpId}
+          lpName={lp?.name}
+          onImported={(newAllocs) => {
+            setAllocations((a) => [...newAllocs, ...a])
+            flash(`${newAllocs.length} holding(s) imported.`)
+          }}
+          onClose={() => setShowBulkHoldings(false)}
+        />
+      ) : null}
 
       <div className="mt-6">
         <Link className="text-sm font-medium text-[var(--color-accent)] hover:underline" to="/lps">

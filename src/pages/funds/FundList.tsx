@@ -4,6 +4,7 @@ import { Building2, Pencil, Plus, Users, X } from 'lucide-react'
 import { api } from '../../api/client'
 import type { Fund, LimitedPartner } from '../../domain/types'
 import { Badge, Button, EmptyState, PageHeader } from '../../components/ui'
+import { BulkImportLpsModal } from '../../components/BulkImportLpsModal'
 import { formatUsd } from '../../util/format'
 import { useAppContext } from '../../context/AppContext'
 
@@ -545,6 +546,7 @@ export function FundList() {
   const [showCreate, setShowCreate] = useState(false)
   const [editingFund, setEditingFund] = useState<Fund | null>(null)
   const [managingLpsForFund, setManagingLpsForFund] = useState<Fund | null>(null)
+  const [importForFund, setImportForFund] = useState<Fund | null>(null)
 
   return (
     <div>
@@ -576,6 +578,17 @@ export function FundList() {
             void refreshFunds()
           }}
           onClose={() => setEditingFund(null)}
+        />
+      )}
+
+      {importForFund && (
+        <BulkImportLpsModal
+          mode="fundScoped"
+          fixedFund={importForFund}
+          funds={funds}
+          onRefreshFunds={refreshFunds}
+          onSuccess={() => void refreshFunds()}
+          onClose={() => setImportForFund(null)}
         />
       )}
 
@@ -635,6 +648,13 @@ export function FundList() {
                       >
                         View LPs →
                       </Link>
+                      <button
+                        type="button"
+                        onClick={() => setImportForFund(fund)}
+                        className="text-left text-xs font-medium text-[var(--color-accent)] hover:underline"
+                      >
+                        Import CSV…
+                      </button>
                       <button
                         type="button"
                         onClick={() => setManagingLpsForFund(fund)}

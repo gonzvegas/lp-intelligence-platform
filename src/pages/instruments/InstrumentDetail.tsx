@@ -13,7 +13,6 @@ import {
 } from '../../domain/legal'
 import { Badge, Button, Card, EmptyState, PageHeader } from '../../components/ui'
 import { useFlash } from '../../components/Flash'
-import { PERSONA_LABEL } from '../../domain/personas'
 import { can } from '../../domain/access'
 import { useAppContext } from '../../context/AppContext'
 import { formatDate } from '../../util/format'
@@ -49,7 +48,7 @@ export function InstrumentDetail() {
   }, [id])
 
   async function confirmRestriction(rid: string) {
-    const updated = await api.confirmRestriction(rid, PERSONA_LABEL[persona])
+    const updated = await api.reviewRestriction(rid, 'confirm')
     if (!updated) return
     const allR = await api.listRestrictions()
     setRest(allR.filter((r) => r.legalDocumentId === id))

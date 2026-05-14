@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { Plus, X } from 'lucide-react'
+import { Plus, Upload, X } from 'lucide-react'
 import { api } from '../../api/client'
 import type { Fund, LimitedPartner } from '../../domain/types'
 import { Badge, Button, PageHeader } from '../../components/ui'
+import { BulkImportLpsModal } from '../../components/BulkImportLpsModal'
 import { formatUsd } from '../../util/format'
 import { useAppContext } from '../../context/AppContext'
 
@@ -443,7 +444,7 @@ function CreateLpForm({ funds, defaultFundId, onSuccess, onClose }: CreateLpForm
 }
 
 export function LpList() {
-  const { fundId, funds } = useAppContext()
+  const { fundId, funds, refreshFunds } = useAppContext()
   const [searchParams] = useSearchParams()
   const queryFundId = searchParams.get('fund') ?? fundId
 
@@ -451,6 +452,7 @@ export function LpList() {
   const [q, setQ] = useState('')
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
+  const [showBulkImport, setShowBulkImport] = useState(false)
 
   function reloadLps() {
     const fp = queryFundId || undefined
@@ -490,11 +492,26 @@ export function LpList() {
         title="LP Management"
         description="Investor profiles, commitments, and linked side letter documents."
         actions={
-          <Button variant="primary" onClick={() => setShowCreate(true)}>
-            <Plus size={15} /> Add LP
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={() => setShowBulkImport(true)}>
+              <Upload size={15} /> Import CSV
+            </Button>
+            <Button variant="primary" onClick={() => setShowCreate(true)}>
+              <Plus size={15} /> Add LP
+            </Button>
+          </div>
         }
       />
+
+      {showBulkImport && (
+        <BulkImportLpsModal
+          mode="platform"
+          funds={funds}
+          onRefreshFunds={refreshFunds}
+          onSuccess={() => void reloadLps()}
+          onClose={() => setShowBulkImport(false)}
+        />
+      )}
 
       {showCreate && (
         <CreateLpForm

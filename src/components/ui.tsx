@@ -135,12 +135,15 @@ export function PageHeader({
 export function EmptyState({
   title,
   hint,
+  icon,
 }: {
   title: string
   hint?: string
+  icon?: ReactNode
 }) {
   return (
     <div className="rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-surface-muted)]/40 px-6 py-10 text-center">
+      {icon ? <div className="mb-3 flex justify-center text-[var(--color-ink-muted)]">{icon}</div> : null}
       <p className="text-sm font-medium text-[var(--color-ink)]">{title}</p>
       {hint ? (
         <p className="mt-2 text-sm text-[var(--color-ink-muted)]">{hint}</p>
