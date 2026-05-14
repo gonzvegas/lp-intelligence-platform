@@ -4,9 +4,11 @@ import {
   ComplianceIndexRedirect,
   ComplianceLayout,
 } from './components/ComplianceLayout'
+import { RequireRole } from './components/RequireRole'
 import { Dashboard } from './pages/Dashboard'
 import { DealList } from './pages/deals/DealList'
 import { DealScreening } from './pages/deals/DealScreening'
+import { FundList } from './pages/funds/FundList'
 import { LpDetail } from './pages/lps/LpDetail'
 import { LpList } from './pages/lps/LpList'
 import { CapacityOverview } from './pages/capacity/CapacityOverview'
@@ -26,6 +28,7 @@ export default function App() {
     <Routes>
       <Route path="/" element={<AppShell />}>
         <Route index element={<Dashboard />} />
+        <Route path="funds" element={<FundList />} />
         <Route path="lps" element={<LpList />} />
         <Route path="lps/:lpId" element={<LpDetail />} />
         <Route path="instruments" element={<InstrumentList />} />
@@ -33,8 +36,22 @@ export default function App() {
         <Route path="side-letters" element={<Navigate to="/instruments" replace />} />
         <Route path="side-letters/:id" element={<InstrumentDetail />} />
         <Route path="obligations" element={<ObligationRegistry />} />
-        <Route path="deals" element={<DealList />} />
-        <Route path="deals/:dealId/screening" element={<DealScreening />} />
+        <Route
+          path="deals"
+          element={
+            <RequireRole permission="nav:deals">
+              <DealList />
+            </RequireRole>
+          }
+        />
+        <Route
+          path="deals/:dealId/screening"
+          element={
+            <RequireRole permission="nav:deals">
+              <DealScreening />
+            </RequireRole>
+          }
+        />
         <Route path="capacity" element={<CapacityOverview />} />
         <Route path="capacity/lps/:lpId" element={<LpCapacityDetail />} />
         <Route path="compliance" element={<ComplianceLayout />}>
@@ -44,9 +61,30 @@ export default function App() {
           <Route path="reports" element={<Reports />} />
           <Route path="obligations" element={<ObligationRegistry />} />
         </Route>
-        <Route path="settings/integrations" element={<Integrations />} />
-        <Route path="settings/users" element={<Users />} />
-        <Route path="settings/roles" element={<Roles />} />
+        <Route
+          path="settings/integrations"
+          element={
+            <RequireRole permission="nav:integrations">
+              <Integrations />
+            </RequireRole>
+          }
+        />
+        <Route
+          path="settings/users"
+          element={
+            <RequireRole permission="nav:admin">
+              <Users />
+            </RequireRole>
+          }
+        />
+        <Route
+          path="settings/roles"
+          element={
+            <RequireRole permission="nav:admin">
+              <Roles />
+            </RequireRole>
+          }
+        />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

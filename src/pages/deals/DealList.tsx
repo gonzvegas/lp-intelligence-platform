@@ -4,14 +4,17 @@ import { api } from '../../api/client'
 import type { Deal } from '../../domain/types'
 import { Badge, PageHeader } from '../../components/ui'
 import { formatUsd } from '../../util/format'
+import { useAppContext } from '../../context/AppContext'
 
 export function DealList() {
+  const { fundId } = useAppContext()
   const [deals, setDeals] = useState<Deal[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     let m = true
-    api.listDeals().then((d) => {
+    setLoading(true)
+    api.listDeals(fundId).then((d) => {
       if (!m) return
       setDeals(d)
       setLoading(false)
@@ -19,7 +22,7 @@ export function DealList() {
     return () => {
       m = false
     }
-  }, [])
+  }, [fundId])
 
   return (
     <div>
@@ -30,9 +33,9 @@ export function DealList() {
           <button
             type="button"
             disabled
-            className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm font-medium text-[var(--color-ink-muted)]"
+            className="rounded-lg border border-dashed border-[var(--color-border)] px-3 py-2 text-sm font-medium text-[var(--color-ink-muted)]"
           >
-            Import from DealCloud (stub)
+            Import from DealCloud
           </button>
         }
       />

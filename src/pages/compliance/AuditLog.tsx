@@ -25,14 +25,14 @@ export function AuditLog() {
     <div>
       <PageHeader
         title="Audit log"
-        description="Immutable-style timeline (mock) capturing screening runs, confirmations, and integrations."
+        description="Append-only timeline capturing screening runs, restriction confirmations, sign-offs, and integrations."
         actions={
           <button
             type="button"
             disabled
-            className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm font-medium text-[var(--color-ink-muted)]"
+            className="rounded-lg border border-dashed border-[var(--color-border)] px-3 py-2 text-sm font-medium text-[var(--color-ink-muted)]"
           >
-            Export CSV (stub)
+            Export CSV
           </button>
         }
       />

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import { CheckCircle2, FileText } from 'lucide-react'
 import { api } from '../../api/client'
 import type {
   ExtractedRestriction,
@@ -13,6 +14,7 @@ import {
 import { Badge, Button, Card, EmptyState, PageHeader } from '../../components/ui'
 import { useFlash } from '../../components/Flash'
 import { PERSONA_LABEL } from '../../domain/personas'
+import { can } from '../../domain/access'
 import { useAppContext } from '../../context/AppContext'
 import { formatDate } from '../../util/format'
 
@@ -20,6 +22,7 @@ export function InstrumentDetail() {
   const { id } = useParams<{ id: string }>()
   const { persona } = useAppContext()
   const flash = useFlash()
+  const canConfirm = can(persona, 'action:confirm_restriction')
   const [doc, setDoc] = useState<LegalDocument | null>(null)
   const [rest, setRest] = useState<ExtractedRestriction[]>([])
   const [obls, setObls] = useState<Obligation[]>([])
@@ -50,7 +53,7 @@ export function InstrumentDetail() {
     if (!updated) return
     const allR = await api.listRestrictions()
     setRest(allR.filter((r) => r.legalDocumentId === id))
-    flash('Restriction confirmed — logged for audit (mock).')
+    flash('Restriction confirmed — logged for audit.')
   }
 
   if (!id) return <EmptyState title="Missing document id" />
@@ -123,9 +126,10 @@ export function InstrumentDetail() {
           <button
             type="button"
             disabled
-            className="mt-4 w-full rounded-lg border border-dashed border-[var(--color-border)] py-2 text-sm text-[var(--color-ink-muted)]"
+            className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-[var(--color-border)] py-2 text-sm text-[var(--color-ink-muted)]"
           >
-            Open source PDF (stub)
+            <FileText size={14} />
+            Source PDF — available after document pipeline
           </button>
         </Card>
 
@@ -171,15 +175,18 @@ export function InstrumentDetail() {
                       “{r.rawQuote}”
                     </p>
                   ) : null}
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <Button
-                      variant="secondary"
-                      disabled={r.reviewStatus === 'confirmed'}
-                      onClick={() => confirmRestriction(r.id)}
-                    >
-                      Mark confirmed (mock)
-                    </Button>
-                  </div>
+                  {canConfirm && (
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <Button
+                        variant="secondary"
+                        disabled={r.reviewStatus === 'confirmed'}
+                        onClick={() => confirmRestriction(r.id)}
+                      >
+                        <CheckCircle2 size={13} />
+                        {r.reviewStatus === 'confirmed' ? 'Confirmed' : 'Confirm restriction'}
+                      </Button>
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>

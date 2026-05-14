@@ -6,8 +6,22 @@ export interface FundContext {
   vintage: string
 }
 
+export interface Fund {
+  id: string
+  externalId: string | null
+  name: string
+  vintage: string | null
+  strategy: string | null
+  targetSizeUsd: number | null
+  currency: string
+  status: string
+  createdAt: string
+  updatedAt: string
+}
+
 export interface LimitedPartner {
   id: string
+  fundId: string
   name: string
   investorType: string
   commitmentUsd: number
@@ -60,11 +74,13 @@ export interface ExtractedRestriction {
   rawQuote?: string
   effectiveFrom: string
   effectiveTo?: string
-  reviewStatus: 'draft' | 'confirmed'
+  clauseText?: string
+  reviewStatus: 'draft' | 'confirmed' | 'rejected'
 }
 
 export interface Deal {
   id: string
+  fundId: string
   name: string
   sector: string
   geography: string
@@ -90,6 +106,7 @@ export interface ScreeningResult {
   lpId: string
   outcome: ScreeningOutcome
   hits: ScreeningRestrictionHit[]
+  concentrationHits: SectorConcentrationHit[]
 }
 
 export interface ScreeningRun {
@@ -115,8 +132,31 @@ export interface Allocation {
   lpId: string
   dealId: string
   dealName: string
+  sector: string
   amountUsd: number
   closedAt: string
+}
+
+/** LP-level sector concentration limit extracted from side letter / LPA. */
+export interface SectorConcentrationRule {
+  id: string
+  lpId: string
+  legalDocumentId: string
+  /** Case-insensitive substring match against Deal.sector */
+  sectorPattern: string
+  sectorLabel: string
+  maxPct: number
+  description: string
+}
+
+export interface SectorConcentrationHit {
+  ruleId: string
+  sectorLabel: string
+  maxPct: number
+  currentPct: number
+  proposedPct: number
+  currentAmountUsd: number
+  proposedAmountUsd: number
 }
 
 export interface CapacitySnapshot {
@@ -199,7 +239,8 @@ export interface UserAccount {
   id: string
   name: string
   email: string
-  roleId: string
+  /** Ordered list — first role is the primary for display purposes. */
+  roleIds: string[]
 }
 
 export interface Role {

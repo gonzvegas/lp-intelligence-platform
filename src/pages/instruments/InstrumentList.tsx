@@ -5,6 +5,7 @@ import type { LegalDocument, LegalInstrumentKind, LimitedPartner } from '../../d
 import { INSTRUMENT_LABEL } from '../../domain/legal'
 import { Badge, PageHeader } from '../../components/ui'
 import { formatDate } from '../../util/format'
+import { useAppContext } from '../../context/AppContext'
 
 const KIND_FILTERS: Array<{ value: string; label: string }> = [
   { value: 'all', label: 'All instruments' },
@@ -17,6 +18,7 @@ const KIND_FILTERS: Array<{ value: string; label: string }> = [
 ]
 
 export function InstrumentList() {
+  const { fundId } = useAppContext()
   const [searchParams, setSearchParams] = useSearchParams()
   const kindFilter = searchParams.get('kind') ?? 'all'
   const [docs, setDocs] = useState<LegalDocument[]>([])
@@ -25,10 +27,11 @@ export function InstrumentList() {
 
   useEffect(() => {
     let m = true
+    setLoading(true)
     ;(async () => {
       const [d, lp] = await Promise.all([
-        api.listLegalDocuments(),
-        api.listLPs(),
+        api.listLegalDocuments(fundId),
+        api.listLPs(fundId),
       ])
       if (!m) return
       setDocs(d)
@@ -38,7 +41,7 @@ export function InstrumentList() {
     return () => {
       m = false
     }
-  }, [])
+  }, [fundId])
 
   const lpName = (id: string | null) =>
     id ? (lps.find((x) => x.id === id)?.name ?? id) : '—'

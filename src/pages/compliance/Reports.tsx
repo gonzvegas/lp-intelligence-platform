@@ -26,7 +26,7 @@ export function Reports() {
         description="Scheduled attestations for regulators, boards, and LP quarterly questionnaires."
         actions={
           <Button variant="secondary" disabled>
-            Request new report (stub)
+            Request new report
           </Button>
         }
       />
@@ -54,7 +54,7 @@ export function Reports() {
                 </Badge>
               </div>
               <Button className="mt-4 w-full" variant="secondary" disabled={job.status !== 'ready'}>
-                Download PDF (stub)
+                Download PDF
               </Button>
             </Card>
           ))}

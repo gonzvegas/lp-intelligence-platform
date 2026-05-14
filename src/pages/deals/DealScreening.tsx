@@ -18,6 +18,7 @@ import {
 import { useFlash } from '../../components/Flash'
 import { PERSONA_LABEL } from '../../domain/personas'
 import { INSTRUMENT_LABEL, PRECEDENCE_POLICY_NOTE } from '../../domain/legal'
+import { can } from '../../domain/access'
 import { useAppContext } from '../../context/AppContext'
 import { formatDate, formatUsd } from '../../util/format'
 
@@ -25,6 +26,7 @@ export function DealScreening() {
   const { dealId } = useParams<{ dealId: string }>()
   const { persona } = useAppContext()
   const flash = useFlash()
+  const canRun = can(persona, 'action:run_screening')
   const [deal, setDeal] = useState<Deal | null>(null)
   const [lps, setLps] = useState<LimitedPartner[]>([])
   const [restrictions, setRestrictions] = useState<ExtractedRestriction[]>(
@@ -42,7 +44,7 @@ export function DealScreening() {
     ;(async () => {
       const [d, lp, r] = await Promise.all([
         api.getDeal(dealId),
-        api.listLPs(),
+        api.listLPs(),  // fund-scoped LPs loaded via deal's fundId after deal loads
         api.listRestrictions(),
       ])
       if (!m) return
@@ -113,11 +115,13 @@ export function DealScreening() {
         actions={
           <>
             <Button variant="secondary" disabled>
-              Export packet (stub)
+              Export packet
             </Button>
-            <Button disabled={running} onClick={runOfficial}>
-              {running ? 'Running…' : 'Run screening & log audit'}
-            </Button>
+            {canRun && (
+              <Button disabled={running} onClick={runOfficial}>
+                {running ? 'Running…' : 'Run screening & log audit'}
+              </Button>
+            )}
           </>
         }
       />
@@ -184,7 +188,7 @@ export function DealScreening() {
             <div className="flex items-center gap-2">
               <span className="text-[var(--color-ink-muted)]">Verified before IC </span>
               <Badge tone={run.verifiedBeforeIc ? 'success' : 'warning'}>
-                {run.verifiedBeforeIc ? 'Yes (mock)' : 'Pending'}
+                {run.verifiedBeforeIc ? 'Verified' : 'Pending'}
               </Badge>
             </div>
           </div>
@@ -245,83 +249,94 @@ export function DealScreening() {
 
         <Card
           title="Why blocked / review"
-          subtitle="Citations include instrument type, precedence rank, and link to source document."
+          subtitle="Restriction hits, precedence citations, and sector concentration checks."
           className="lg:col-span-2"
         >
           {selected ? (
             <div className="space-y-4">
-              <div>
-                <div className="text-xs font-semibold uppercase text-[var(--color-ink-muted)]">
-                  Selected LP
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-xs font-semibold uppercase text-[var(--color-ink-muted)]">Selected LP</div>
+                  <div className="text-base font-semibold">{lpMap[selected.lpId]?.name}</div>
                 </div>
-                <div className="text-base font-semibold">
-                  {lpMap[selected.lpId]?.name}
-                </div>
-                <div className="mt-2">
-                  <Badge tone={outcomeTone(selected.outcome)}>
-                    {selected.outcome}
-                  </Badge>
-                </div>
+                <Badge tone={outcomeTone(selected.outcome)}>{selected.outcome}</Badge>
               </div>
-              {selected.hits.length === 0 ? (
-                <p className="text-sm text-[var(--color-ink-muted)]">
-                  No blocking restrictions matched mock logic for this deal profile.
-                </p>
-              ) : (
-                <ul className="space-y-3">
-                  {selected.hits.map((h) => {
-                    const r = restrictionById(h.restrictionId)
-                    return (
-                      <li
-                        key={h.restrictionId}
-                        className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-muted)]/50 p-3"
-                      >
-                        <div className="flex flex-wrap gap-2">
-                          <Badge tone="neutral" className="font-mono">
-                            {h.restrictionId}
-                          </Badge>
-                          <Badge tone="accent">
-                            {INSTRUMENT_LABEL[h.instrumentKind]}
-                          </Badge>
-                          <Badge tone="neutral" className="font-mono text-[10px]">
-                            rank {h.precedenceRank}
-                          </Badge>
-                          <Link
-                            className="text-xs font-medium text-[var(--color-accent)] hover:underline"
-                            to={`/instruments/${h.legalDocumentId}`}
-                          >
-                            {h.instrumentTitle}
-                          </Link>
-                          {r ? (
-                            <>
-                              <Badge tone="neutral">{r.category}</Badge>
-                              <Badge
-                                tone={
-                                  r.reviewStatus === 'confirmed'
-                                    ? 'success'
-                                    : 'warning'
-                                }
-                              >
-                                {r.reviewStatus === 'draft'
-                                  ? 'Extracted'
-                                  : 'Confirmed'}
-                              </Badge>
-                            </>
-                          ) : null}
+
+              {/* Restriction hits */}
+              {selected.hits.length > 0 && (
+                <div>
+                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-muted)]">
+                    Restriction hits
+                  </div>
+                  <ul className="space-y-3">
+                    {selected.hits.map((h) => {
+                      const r = restrictionById(h.restrictionId)
+                      return (
+                        <li key={h.restrictionId} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-muted)]/50 p-3">
+                          <div className="flex flex-wrap gap-2">
+                            <Badge tone="neutral" className="font-mono">{h.restrictionId}</Badge>
+                            <Badge tone="accent">{INSTRUMENT_LABEL[h.instrumentKind]}</Badge>
+                            <Badge tone="neutral" className="font-mono text-[10px]">rank {h.precedenceRank}</Badge>
+                            <Link className="text-xs font-medium text-[var(--color-accent)] hover:underline" to={`/instruments/${h.legalDocumentId}`}>
+                              {h.instrumentTitle}
+                            </Link>
+                            {r && (
+                              <>
+                                <Badge tone="neutral">{r.category}</Badge>
+                                <Badge tone={r.reviewStatus === 'confirmed' ? 'success' : 'warning'}>
+                                  {r.reviewStatus === 'draft' ? 'Extracted' : 'Confirmed'}
+                                </Badge>
+                              </>
+                            )}
+                          </div>
+                          <p className="mt-2 text-sm font-medium text-[var(--color-ink)]">{h.reason}</p>
+                          {r && (
+                            <p className="mt-1 text-xs text-[var(--color-ink-muted)]">
+                              {r.summary}{r.sectionRef ? ` (${r.sectionRef})` : ''}
+                            </p>
+                          )}
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
+              )}
+
+              {/* Sector concentration hits */}
+              {selected.concentrationHits.length > 0 && (
+                <div>
+                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-muted)]">
+                    Sector concentration
+                  </div>
+                  <ul className="space-y-3">
+                    {selected.concentrationHits.map((c) => (
+                      <li key={c.ruleId} className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge tone="warning">{c.sectorLabel}</Badge>
+                          <Badge tone="neutral" className="text-[10px]">concentration cap</Badge>
                         </div>
-                        <p className="mt-2 text-sm font-medium text-[var(--color-ink)]">
-                          {h.reason}
+                        <p className="mt-2 text-sm font-medium text-amber-900">
+                          Adding this deal would bring {c.sectorLabel} exposure to <strong>{c.proposedPct}%</strong> of commitment — exceeds the {c.maxPct}% limit.
                         </p>
-                        {r ? (
-                          <p className="mt-1 text-xs text-[var(--color-ink-muted)]">
-                            Clause text: {r.summary}
-                            {r.sectionRef ? ` (${r.sectionRef})` : ''}
-                          </p>
-                        ) : null}
+                        <div className="mt-2 text-xs text-amber-800">
+                          Current: {formatUsd(c.currentAmountUsd)} ({c.currentPct}%) · Proposed addition: {formatUsd(c.proposedAmountUsd)}
+                        </div>
+                        <Link
+                          to={`/capacity/lps/${selected.lpId}`}
+                          className="mt-1 inline-block text-xs font-medium text-amber-800 hover:underline"
+                        >
+                          View capacity detail →
+                        </Link>
                       </li>
-                    )
-                  })}
-                </ul>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {selected.hits.length === 0 && selected.concentrationHits.length === 0 && (
+                <p className="text-sm text-[var(--color-ink-muted)]">
+                  No restrictions or concentration limits triggered for this deal profile.
+                </p>
               )}
             </div>
           ) : (

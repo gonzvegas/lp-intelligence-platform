@@ -1,0 +1,68 @@
+[
+  {
+    "id": "dc-deal-001",
+    "name": "Helios Solar Portfolio",
+    "sector": "Renewable Energy",
+    "geography": "US Southwest",
+    "stage": "ic_review",
+    "status": "pipeline",
+    "proposedAmountUsd": 8000000,
+    "structureTags": [],
+    "esgFlags": ["clean_energy"]
+  },
+  {
+    "id": "dc-deal-002",
+    "name": "MedTech Ventures III",
+    "sector": "Healthcare",
+    "geography": "US",
+    "stage": "due_diligence",
+    "status": "pipeline",
+    "proposedAmountUsd": 5000000,
+    "structureTags": [],
+    "esgFlags": []
+  },
+  {
+    "id": "dc-deal-003",
+    "name": "Ironclad Industrial",
+    "sector": "Manufacturing",
+    "geography": "Midwest US",
+    "stage": "screening",
+    "status": "pipeline",
+    "proposedAmountUsd": 12000000,
+    "structureTags": ["affiliate_sponsor"],
+    "esgFlags": []
+  },
+  {
+    "id": "dc-deal-004",
+    "name": "ClearWater Infrastructure",
+    "sector": "Infrastructure",
+    "geography": "US",
+    "stage": "closing",
+    "status": "closed",
+    "proposedAmountUsd": 20000000,
+    "structureTags": [],
+    "esgFlags": []
+  },
+  {
+    "id": "dc-deal-005",
+    "name": "Apex Logistics Platform",
+    "sector": "Transportation",
+    "geography": "US",
+    "stage": "ic_review",
+    "status": "pipeline",
+    "proposedAmountUsd": 7500000,
+    "structureTags": [],
+    "esgFlags": []
+  },
+  {
+    "id": "dc-deal-006",
+    "name": "GreenField Agri Fund",
+    "sector": "Agriculture",
+    "geography": "Midwest US",
+    "stage": "screening",
+    "status": "pipeline",
+    "proposedAmountUsd": 4000000,
+    "structureTags": [],
+    "esgFlags": ["sustainable_agriculture"]
+  }
+]

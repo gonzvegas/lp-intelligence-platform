@@ -14,6 +14,8 @@ import type {
   ScreeningRestrictionHit,
   ScreeningResult,
   ScreeningRun,
+  SectorConcentrationHit,
+  SectorConcentrationRule,
   SignOff,
   UserAccount,
 } from '../domain/types'
@@ -29,6 +31,7 @@ import {
   reportJobs,
   restrictions,
   roles,
+  sectorConcentrationRules,
   sideLetters,
   signOffs,
   users,
@@ -96,6 +99,39 @@ function restrictionConflictsDeal(
   return null
 }
 
+function sectorConcentrationCheck(lp: LimitedPartner, deal: Deal): SectorConcentrationHit[] {
+  const rules = sectorConcentrationRules.filter((r) => r.lpId === lp.id)
+  const lpAllocs = allocations.filter((a) => a.lpId === lp.id)
+  const hits: SectorConcentrationHit[] = []
+
+  for (const rule of rules) {
+    const pattern = rule.sectorPattern.toLowerCase()
+    const matchesDeal = deal.sector.toLowerCase().includes(pattern)
+    if (!matchesDeal) continue
+
+    const currentAmount = lpAllocs
+      .filter((a) => a.sector.toLowerCase().includes(pattern))
+      .reduce((sum, a) => sum + a.amountUsd, 0)
+
+    const currentPct = (currentAmount / lp.commitmentUsd) * 100
+    const proposedPct = ((currentAmount + deal.proposedAmountUsd) / lp.commitmentUsd) * 100
+
+    if (proposedPct > rule.maxPct) {
+      hits.push({
+        ruleId: rule.id,
+        sectorLabel: rule.sectorLabel,
+        maxPct: rule.maxPct,
+        currentPct: Math.round(currentPct * 10) / 10,
+        proposedPct: Math.round(proposedPct * 10) / 10,
+        currentAmountUsd: currentAmount,
+        proposedAmountUsd: deal.proposedAmountUsd,
+      })
+    }
+  }
+
+  return hits
+}
+
 export function evaluateScreeningForDeal(deal: Deal): ScreeningResult[] {
   return limitedPartners.map((lp) => {
     const lpRestrictions = restrictions.filter(
@@ -119,8 +155,10 @@ export function evaluateScreeningForDeal(deal: Deal): ScreeningResult[] {
 
     hits.sort((a, b) => a.precedenceRank - b.precedenceRank)
 
+    const concentrationHits = sectorConcentrationCheck(lp, deal)
+
     let outcome: ScreeningResult['outcome'] = 'eligible'
-    if (hits.length) {
+    if (hits.length || concentrationHits.length) {
       const related = hits
         .map((h) => lpRestrictions.find((x) => x.id === h.restrictionId))
         .filter(Boolean) as ExtractedRestriction[]
@@ -128,12 +166,13 @@ export function evaluateScreeningForDeal(deal: Deal): ScreeningResult[] {
       const draftHit = related.some((x) => x.reviewStatus === 'draft')
       const hardHit = related.some((x) => x.severity === 'hard')
 
-      if (draftHit) outcome = 'needs_review'
+      if (concentrationHits.length) outcome = 'needs_review'
+      else if (draftHit) outcome = 'needs_review'
       else if (hardHit) outcome = 'ineligible'
       else outcome = 'needs_review'
     }
 
-    return { lpId: lp.id, outcome, hits }
+    return { lpId: lp.id, outcome, hits, concentrationHits }
   })
 }
 
@@ -167,22 +206,23 @@ export function getDealById(id: string): Deal | undefined {
   return deals.find((d) => d.id === id)
 }
 
-export function listDeals(): Deal[] {
-  return deals
+export function listDeals(fundId?: string): Deal[] {
+  if (!fundId) return deals
+  return deals.filter((d) => d.fundId === fundId)
 }
 
-export function listLPs(): LimitedPartner[] {
-  return limitedPartners
+export function listLPs(fundId?: string): LimitedPartner[] {
+  if (!fundId) return limitedPartners
+  return limitedPartners.filter((lp) => lp.fundId === fundId)
 }
 
 export function getLpById(id: string): LimitedPartner | undefined {
   return limitedPartners.find((lp) => lp.id === id)
 }
 
-export function listLegalDocuments(): LegalDocument[] {
-  return [...legalDocuments].sort((a, b) =>
-    a.uploadedAt < b.uploadedAt ? 1 : -1,
-  )
+export function listLegalDocuments(fundId?: string): LegalDocument[] {
+  const src = fundId ? legalDocuments.filter((d) => d.fundId === fundId) : legalDocuments
+  return [...src].sort((a, b) => (a.uploadedAt < b.uploadedAt ? 1 : -1))
 }
 
 export function getLegalDocumentById(id: string): LegalDocument | undefined {
@@ -305,6 +345,101 @@ export function listUsers(): UserAccount[] {
 
 export function listRoles(): Role[] {
   return roles
+}
+
+function syncFundedUsd(lpId: string): void {
+  const lp = limitedPartners.find((x) => x.id === lpId)
+  if (!lp) return
+  lp.fundedUsd = allocations
+    .filter((a) => a.lpId === lpId)
+    .reduce((sum, a) => sum + a.amountUsd, 0)
+}
+
+export function addAllocation(
+  lpId: string,
+  dealName: string,
+  sector: string,
+  amountUsd: number,
+  closedAt: string,
+): Allocation {
+  const newAlloc: Allocation = {
+    id: `a-${Date.now()}`,
+    lpId,
+    dealId: `manual-${Date.now()}`,
+    dealName,
+    sector,
+    amountUsd,
+    closedAt,
+  }
+  allocations.push(newAlloc)
+  syncFundedUsd(lpId)
+  return newAlloc
+}
+
+export function updateAllocation(
+  allocationId: string,
+  patch: { dealName?: string; sector?: string; amountUsd?: number; closedAt?: string },
+): Allocation | undefined {
+  const alloc = allocations.find((a) => a.id === allocationId)
+  if (!alloc) return undefined
+  if (patch.dealName !== undefined) alloc.dealName = patch.dealName
+  if (patch.sector !== undefined) alloc.sector = patch.sector
+  if (patch.amountUsd !== undefined) alloc.amountUsd = patch.amountUsd
+  if (patch.closedAt !== undefined) alloc.closedAt = patch.closedAt
+  syncFundedUsd(alloc.lpId)
+  return alloc
+}
+
+export function removeAllocation(allocationId: string): boolean {
+  const idx = allocations.findIndex((a) => a.id === allocationId)
+  if (idx === -1) return false
+  const lpId = allocations[idx].lpId
+  allocations.splice(idx, 1)
+  syncFundedUsd(lpId)
+  return true
+}
+
+export function listSectorConcentrationRules(lpId?: string): SectorConcentrationRule[] {
+  return lpId
+    ? sectorConcentrationRules.filter((r) => r.lpId === lpId)
+    : sectorConcentrationRules
+}
+
+export function sectorBreakdownForLp(lpId: string): Array<{ sector: string; amountUsd: number; pct: number }> {
+  const lp = limitedPartners.find((x) => x.id === lpId)
+  if (!lp) return []
+  const lpAllocs = allocations.filter((a) => a.lpId === lpId)
+  const map: Record<string, number> = {}
+  for (const a of lpAllocs) {
+    map[a.sector] = (map[a.sector] ?? 0) + a.amountUsd
+  }
+  return Object.entries(map)
+    .map(([sector, amountUsd]) => ({
+      sector,
+      amountUsd,
+      pct: Math.round((amountUsd / lp.commitmentUsd) * 1000) / 10,
+    }))
+    .sort((a, b) => b.amountUsd - a.amountUsd)
+}
+
+export function updateLpCommitment(
+  lpId: string,
+  commitmentUsd: number,
+  fundedUsd: number,
+): LimitedPartner | undefined {
+  const lp = limitedPartners.find((x) => x.id === lpId)
+  if (!lp) return undefined
+  lp.commitmentUsd = commitmentUsd
+  lp.fundedUsd = fundedUsd
+  return lp
+}
+
+export function setUserRoles(userId: string, roleIds: string[]): UserAccount | undefined {
+  const user = users.find((u) => u.id === userId)
+  if (!user) return undefined
+  const valid = roleIds.filter((id) => roles.some((r) => r.id === id))
+  user.roleIds = valid
+  return user
 }
 
 export function appendAuditEvent(event: Omit<AuditEvent, 'id'>): AuditEvent {

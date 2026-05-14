@@ -10,6 +10,7 @@ import type {
   Obligation,
   ReportJob,
   Role,
+  SectorConcentrationRule,
   SignOff,
   UserAccount,
 } from '../domain/types'
@@ -22,31 +23,35 @@ export const funds = [
 export const limitedPartners: LimitedPartner[] = [
   {
     id: 'lp-1',
+    fundId: 'fund-1',
     name: 'State Pension Trust Alpha',
     investorType: 'Public pension',
     commitmentUsd: 75_000_000,
-    fundedUsd: 42_000_000,
+    fundedUsd: 19_000_000,
   },
   {
     id: 'lp-2',
+    fundId: 'fund-1',
     name: 'University Endowment Beta',
     investorType: 'Endowment',
     commitmentUsd: 40_000_000,
-    fundedUsd: 18_500_000,
+    fundedUsd: 6_500_000,
   },
   {
     id: 'lp-3',
+    fundId: 'fund-1',
     name: 'Insurance Pool Gamma',
     investorType: 'Insurance',
     commitmentUsd: 60_000_000,
-    fundedUsd: 33_000_000,
+    fundedUsd: 16_500_000,
   },
   {
     id: 'lp-4',
+    fundId: 'fund-1',
     name: 'Family Office Delta',
     investorType: 'Family office',
     commitmentUsd: 25_000_000,
-    fundedUsd: 9_000_000,
+    fundedUsd: 0,
   },
 ]
 
@@ -363,6 +368,7 @@ export const obligations: Obligation[] = [
 export const deals: Deal[] = [
   {
     id: 'deal-1',
+    fundId: 'fund-1',
     name: 'Midstream Logistics Credit Facility',
     sector: 'Energy — Midstream',
     geography: 'United States',
@@ -373,6 +379,7 @@ export const deals: Deal[] = [
   },
   {
     id: 'deal-2',
+    fundId: 'fund-1',
     name: 'Regional Casino Operator Term Loan',
     sector: 'Consumer — Gaming',
     geography: 'United States',
@@ -382,6 +389,7 @@ export const deals: Deal[] = [
   },
   {
     id: 'deal-3',
+    fundId: 'fund-1',
     name: 'Export-Oriented Holdings Co.',
     sector: 'Industrials',
     geography: 'Country X',
@@ -391,6 +399,7 @@ export const deals: Deal[] = [
   },
   {
     id: 'deal-4',
+    fundId: 'fund-1',
     name: 'Power Generation Asset Refi',
     sector: 'Energy — Power',
     geography: 'Canada',
@@ -400,11 +409,16 @@ export const deals: Deal[] = [
   },
 ]
 
-export const capacityRules: CapacityRule[] = limitedPartners.map((lp, i) => ({
+/**
+ * Per-deal concentration limits sourced from executed side letters / LPA.
+ * Until a real document is parsed, each LP defaults to 15% — edit per LP
+ * once the actual clause is confirmed with Legal.
+ */
+export const capacityRules: CapacityRule[] = limitedPartners.map((lp) => ({
   id: `cr-${lp.id}`,
   lpId: lp.id,
-  maxSingleInvestmentPct: [12, 15, 10, 20][i] ?? 15,
-  description: 'Per-deal concentration limit per executed side letter.',
+  maxSingleInvestmentPct: 15,
+  description: 'Per-deal concentration limit (default 15% — update from executed side letter).',
 }))
 
 export const allocations: Allocation[] = [
@@ -413,6 +427,7 @@ export const allocations: Allocation[] = [
     lpId: 'lp-1',
     dealId: 'past-1',
     dealName: 'Sponsor-backed SaaS revolver',
+    sector: 'Technology — Software',
     amountUsd: 8_000_000,
     closedAt: '2025-01-15',
   },
@@ -421,6 +436,7 @@ export const allocations: Allocation[] = [
     lpId: 'lp-1',
     dealId: 'past-2',
     dealName: 'Healthcare rollup TL-C',
+    sector: 'Healthcare',
     amountUsd: 11_000_000,
     closedAt: '2025-08-22',
   },
@@ -429,8 +445,80 @@ export const allocations: Allocation[] = [
     lpId: 'lp-2',
     dealId: 'past-3',
     dealName: 'Industrial packaging acquisition',
+    sector: 'Industrials',
     amountUsd: 6_500_000,
     closedAt: '2025-03-10',
+  },
+  {
+    id: 'a-4',
+    lpId: 'lp-3',
+    dealId: 'past-4',
+    dealName: 'Specialty chemicals TL-B',
+    sector: 'Industrials',
+    amountUsd: 9_000_000,
+    closedAt: '2025-06-01',
+  },
+  {
+    id: 'a-5',
+    lpId: 'lp-3',
+    dealId: 'past-5',
+    dealName: 'Midstream pipeline revolver',
+    sector: 'Energy — Midstream',
+    amountUsd: 7_500_000,
+    closedAt: '2025-09-15',
+  },
+]
+
+/**
+ * Sector concentration limits extracted from side letters / LPA.
+ * These run alongside hard restrictions — a deal may be eligible per clause
+ * but still breach a portfolio-level concentration cap.
+ */
+export const sectorConcentrationRules: SectorConcentrationRule[] = [
+  {
+    id: 'scr-1',
+    lpId: 'lp-1',
+    legalDocumentId: 'sl-1',
+    sectorPattern: 'energy',
+    sectorLabel: 'Energy',
+    maxPct: 20,
+    description: 'State Pension Trust Alpha: aggregate Energy exposure ≤ 20% of total commitment (§ 4.5).',
+  },
+  {
+    id: 'scr-2',
+    lpId: 'lp-2',
+    legalDocumentId: 'sl-2',
+    sectorPattern: 'gaming',
+    sectorLabel: 'Consumer — Gaming',
+    maxPct: 10,
+    description: 'University Endowment Beta: Gaming sector ≤ 10% of total commitment (§ 3.1).',
+  },
+  {
+    id: 'scr-3',
+    lpId: 'lp-2',
+    legalDocumentId: 'sl-2',
+    sectorPattern: 'consumer',
+    sectorLabel: 'Consumer',
+    maxPct: 25,
+    description: 'University Endowment Beta: total Consumer sector ≤ 25% of total commitment.',
+  },
+  {
+    id: 'scr-4',
+    lpId: 'lp-3',
+    legalDocumentId: 'sl-3',
+    sectorPattern: 'energy',
+    sectorLabel: 'Energy',
+    maxPct: 25,
+    description: 'Insurance Pool Gamma: Energy sector ≤ 25% of total commitment (§ 5.2).',
+  },
+  {
+    id: 'scr-5',
+    lpId: 'lp-4',
+    legalDocumentId: 'sl-4',
+    sectorPattern: 'energy',
+    sectorLabel: 'Energy',
+    maxPct: 30,
+    description: 'Family Office Delta: Energy sector ≤ 30% of total commitment.',
   },
 ]
 
@@ -554,9 +642,9 @@ export const roles: Role[] = [
 ]
 
 export const users: UserAccount[] = [
-  { id: 'u-1', name: 'Sam Rivera', email: 'sam.rivera@example.com', roleId: 'role-gp' },
-  { id: 'u-2', name: 'Jordan Lee', email: 'jordan.lee@example.com', roleId: 'role-compliance' },
-  { id: 'u-3', name: 'Alex Kim', email: 'alex.kim@example.com', roleId: 'role-ir' },
-  { id: 'u-4', name: 'Morgan Patel', email: 'morgan.patel@example.com', roleId: 'role-legal' },
-  { id: 'u-5', name: 'Taylor Chen', email: 'taylor.chen@example.com', roleId: 'role-admin' },
+  { id: 'u-1', name: 'Sam Rivera',   email: 'sam.rivera@example.com',   roleIds: ['role-gp'] },
+  { id: 'u-2', name: 'Jordan Lee',   email: 'jordan.lee@example.com',   roleIds: ['role-compliance'] },
+  { id: 'u-3', name: 'Alex Kim',     email: 'alex.kim@example.com',     roleIds: ['role-ir'] },
+  { id: 'u-4', name: 'Morgan Patel', email: 'morgan.patel@example.com', roleIds: ['role-legal', 'role-compliance'] },
+  { id: 'u-5', name: 'Taylor Chen',  email: 'taylor.chen@example.com',  roleIds: ['role-admin'] },
 ]

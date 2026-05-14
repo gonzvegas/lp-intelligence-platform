@@ -1,0 +1,34 @@
+[
+  {
+    "id": "dc-lp-001",
+    "name": "State Pension Trust Alpha",
+    "entityType": "pension_fund",
+    "jurisdiction": "US",
+    "commitmentUsd": 50000000,
+    "status": "active"
+  },
+  {
+    "id": "dc-lp-002",
+    "name": "Nordic Sovereign Wealth",
+    "entityType": "sovereign_wealth",
+    "jurisdiction": "NO",
+    "commitmentUsd": 75000000,
+    "status": "active"
+  },
+  {
+    "id": "dc-lp-003",
+    "name": "Hartwell Family Office",
+    "entityType": "family_office",
+    "jurisdiction": "US",
+    "commitmentUsd": 10000000,
+    "status": "active"
+  },
+  {
+    "id": "dc-lp-004",
+    "name": "Meridian Endowment Fund",
+    "entityType": "endowment",
+    "jurisdiction": "US",
+    "commitmentUsd": 25000000,
+    "status": "active"
+  }
+]
