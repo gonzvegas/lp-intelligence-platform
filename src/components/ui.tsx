@@ -57,7 +57,7 @@ export function Button({
     primary:
       'bg-[var(--color-accent)] text-white hover:brightness-110 focus-visible:outline-[var(--color-accent)]',
     secondary:
-      'border border-[var(--color-border)] bg-white text-[var(--color-ink)] hover:bg-[var(--color-surface-muted)]',
+      'border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-ink)] hover:bg-[var(--color-surface-muted)]',
     ghost:
       'text-[var(--color-ink)] hover:bg-[var(--color-accent-muted)]/60',
     danger:
@@ -83,7 +83,7 @@ export function Badge({
 }) {
   const tones = {
     neutral:
-      'bg-[var(--color-surface-muted)] text-[var(--color-ink)] ring-1 ring-[var(--color-border)]',
+      'bg-[var(--color-surface-muted)] text-[var(--color-ink)] ring-1 ring-[var(--color-border)] dark:bg-[var(--color-surface-muted)] dark:ring-[var(--color-border)]',
     success:
       'bg-emerald-50 text-emerald-900 ring-1 ring-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-100 dark:ring-emerald-900',
     warning:

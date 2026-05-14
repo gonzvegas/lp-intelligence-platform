@@ -1,5 +1,8 @@
 @import 'tailwindcss';
 
+/* Class-based dark mode (toggle via `dark` on <html>) */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --font-sans: 'DM Sans', ui-sans-serif, system-ui, sans-serif;
   --font-mono: ui-monospace, 'Cascadia Code', monospace;
@@ -17,6 +20,20 @@
 
 :root {
   color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
+  --color-surface: oklch(0.2 0.022 280);
+  --color-surface-muted: oklch(0.15 0.024 280);
+  --color-border: oklch(0.34 0.03 280);
+  --color-ink: oklch(0.94 0.015 280);
+  --color-ink-muted: oklch(0.66 0.03 280);
+  --color-accent: oklch(0.68 0.17 265);
+  --color-accent-muted: oklch(0.28 0.08 265);
+  --color-success: oklch(0.72 0.14 155);
+  --color-warning: oklch(0.8 0.12 85);
+  --color-danger: oklch(0.68 0.18 25);
 }
 
 body {

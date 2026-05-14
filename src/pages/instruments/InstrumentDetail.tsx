@@ -147,8 +147,8 @@ export function InstrumentDetail() {
                   className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-muted)]/40 p-4"
                 >
                   <div className="flex flex-wrap items-center gap-2">
-                    <Badge tone="neutral" className="font-mono text-[10px]">
-                      rank {r.precedenceRank}
+                    <Badge tone="neutral" className="text-[10px]">
+                      Demo clause order · {r.precedenceRank}
                     </Badge>
                     <Badge tone="neutral" className="capitalize">
                       {r.category}

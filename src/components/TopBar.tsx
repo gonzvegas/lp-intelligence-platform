@@ -1,7 +1,6 @@
-import { ChevronDown } from 'lucide-react'
+import { ChevronDown, Moon, Sun } from 'lucide-react'
 import type { PersonaId } from '../domain/types'
 import { PERSONA_LABEL } from '../domain/personas'
-import { funds } from '../mocks/fixtures'
 import { useAppContext } from '../context/AppContext'
 
 const personas: PersonaId[] = ['gp', 'compliance', 'ir', 'legal', 'admin']
@@ -15,22 +14,24 @@ const PERSONA_INITIALS: Record<PersonaId, string> = {
 }
 
 const PERSONA_COLOR: Record<PersonaId, string> = {
-  gp: 'bg-violet-100 text-violet-800',
-  compliance: 'bg-blue-100 text-blue-800',
-  ir: 'bg-emerald-100 text-emerald-800',
-  legal: 'bg-amber-100 text-amber-800',
-  admin: 'bg-slate-100 text-slate-700',
+  gp: 'bg-violet-100 text-violet-800 dark:bg-violet-900/55 dark:text-violet-200',
+  compliance: 'bg-blue-100 text-blue-800 dark:bg-blue-900/55 dark:text-blue-200',
+  ir: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/55 dark:text-emerald-200',
+  legal: 'bg-amber-100 text-amber-800 dark:bg-amber-900/55 dark:text-amber-200',
+  admin: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200',
 }
 
 function SelectField({
   label,
   value,
   onChange,
+  disabled,
   children,
 }: {
   label: string
   value: string
   onChange: (v: string) => void
+  disabled?: boolean
   children: React.ReactNode
 }) {
   return (
@@ -38,10 +39,11 @@ function SelectField({
       <span className="text-[10px] font-semibold uppercase tracking-widest text-[var(--color-ink-muted)]">
         {label}
       </span>
-      <div className="relative">
+        <div className="relative">
         <select
-          className="w-full appearance-none rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] py-1.5 pl-3 pr-8 text-sm font-medium text-[var(--color-ink)] transition focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/30"
+          className="w-full appearance-none rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] py-1.5 pl-3 pr-8 text-sm font-medium text-[var(--color-ink)] transition focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/30 disabled:cursor-not-allowed disabled:opacity-60"
           value={value}
+          disabled={disabled}
           onChange={(e) => onChange(e.target.value)}
         >
           {children}
@@ -56,7 +58,19 @@ function SelectField({
 }
 
 export function TopBar() {
-  const { fundId, setFundId, persona, setPersona } = useAppContext()
+  const {
+    fundId,
+    setFundId,
+    funds,
+    fundsLoading,
+    persona,
+    setPersona,
+    colorScheme,
+    toggleColorScheme,
+  } = useAppContext()
+
+  const selectValue =
+    fundId && funds.some((f) => f.id === fundId) ? fundId : funds[0]?.id ?? ''
 
   const personaLabel = PERSONA_LABEL[persona]
   const initials = PERSONA_INITIALS[persona]
@@ -64,12 +78,24 @@ export function TopBar() {
   return (
     <header className="flex flex-wrap items-center justify-between gap-4 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-3">
       <div className="flex flex-wrap items-end gap-6">
-        <SelectField label="Fund" value={fundId} onChange={setFundId}>
-          {funds.map((f) => (
-            <option key={f.id} value={f.id}>
-              {f.name} ({f.vintage})
-            </option>
-          ))}
+        <SelectField
+          label="Fund"
+          value={selectValue}
+          onChange={setFundId}
+          disabled={fundsLoading || funds.length === 0}
+        >
+          {fundsLoading ? (
+            <option value="">Loading funds…</option>
+          ) : funds.length === 0 ? (
+            <option value="">No funds yet — add under Fund Management</option>
+          ) : (
+            funds.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.name}
+                {f.vintage ? ` (${f.vintage})` : ''}
+              </option>
+            ))
+          )}
         </SelectField>
 
         <SelectField
@@ -85,16 +111,28 @@ export function TopBar() {
         </SelectField>
       </div>
 
-      {/* User chip */}
-      <div className="flex items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-2">
-        <div
-          className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold ${PERSONA_COLOR[persona]}`}
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={toggleColorScheme}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-ink)] transition hover:bg-[var(--color-surface-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/30"
+          title={colorScheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          aria-label={colorScheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
         >
-          {initials}
-        </div>
-        <div>
-          <div className="text-sm font-semibold text-[var(--color-ink)]">Demo user</div>
-          <div className="text-xs text-[var(--color-ink-muted)]">{personaLabel}</div>
+          {colorScheme === 'dark' ? <Sun size={18} strokeWidth={1.75} /> : <Moon size={18} strokeWidth={1.75} />}
+        </button>
+
+        {/* User chip */}
+        <div className="flex items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-2">
+          <div
+            className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold ${PERSONA_COLOR[persona]}`}
+          >
+            {initials}
+          </div>
+          <div>
+            <div className="text-sm font-semibold text-[var(--color-ink)]">Demo user</div>
+            <div className="text-xs text-[var(--color-ink-muted)]">{personaLabel}</div>
+          </div>
         </div>
       </div>
     </header>

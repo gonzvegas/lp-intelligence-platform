@@ -31,9 +31,9 @@ function StatCard({
 }) {
   const toneStyles = {
     neutral: 'text-[var(--color-accent)] bg-[var(--color-accent-muted)]',
-    danger: 'text-red-600 bg-red-50',
-    warning: 'text-amber-700 bg-amber-50',
-    success: 'text-emerald-700 bg-emerald-50',
+    danger: 'text-red-600 bg-red-50 dark:text-red-200 dark:bg-red-950/35',
+    warning: 'text-amber-700 bg-amber-50 dark:text-amber-200 dark:bg-amber-950/35',
+    success: 'text-emerald-700 bg-emerald-50 dark:text-emerald-200 dark:bg-emerald-950/35',
   }
 
   const content = (

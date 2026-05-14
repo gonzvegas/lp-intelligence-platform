@@ -5,6 +5,7 @@ import type {
   CapacitySnapshot,
   Deal,
   ExtractedRestriction,
+  Fund,
   IntegrationStatus,
   LegalDocument,
   LimitedPartner,
@@ -36,6 +37,89 @@ import {
   signOffs,
   users,
 } from './fixtures'
+import { getEffectiveInstrumentOrder } from '../domain/instrumentPrecedenceStorage'
+import { precedenceSortIndex } from '../domain/legal'
+
+/** Persisted fund registry for mock / offline UI — same source as Fund Management page. */
+const MOCK_FUNDS_KEY = 'lip.mockFunds'
+
+function readMockFunds(): Fund[] {
+  try {
+    const raw = localStorage.getItem(MOCK_FUNDS_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as Fund[]
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((f) => f && typeof f.id === 'string' && typeof f.name === 'string')
+  } catch {
+    return []
+  }
+}
+
+function writeMockFunds(rows: Fund[]) {
+  localStorage.setItem(MOCK_FUNDS_KEY, JSON.stringify(rows))
+}
+
+export function listFunds(): Fund[] {
+  return readMockFunds()
+}
+
+export function createFund(input: {
+  name: string
+  vintage?: string | null
+  strategy?: string | null
+  targetSizeUsd?: number | null
+  currency?: string
+  status?: string
+}): Fund {
+  const now = new Date().toISOString()
+  const rows = readMockFunds()
+  const id = `fund-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+  const fund: Fund = {
+    id,
+    externalId: null,
+    name: input.name,
+    vintage: input.vintage ?? null,
+    strategy: input.strategy ?? null,
+    targetSizeUsd: input.targetSizeUsd ?? null,
+    currency: input.currency ?? 'USD',
+    status: input.status ?? 'fundraising',
+    createdAt: now,
+    updatedAt: now,
+  }
+  writeMockFunds([fund, ...rows])
+  return fund
+}
+
+export function updateFund(
+  fundId: string,
+  patch: {
+    name?: string
+    vintage?: string | null
+    strategy?: string | null
+    targetSizeUsd?: number | null
+    currency?: string
+    status?: string
+  },
+): Fund | undefined {
+  const rows = readMockFunds()
+  const idx = rows.findIndex((f) => f.id === fundId)
+  if (idx === -1) return undefined
+  const cur = rows[idx]
+  const next: Fund = {
+    ...cur,
+    name: patch.name ?? cur.name,
+    vintage: patch.vintage !== undefined ? patch.vintage : cur.vintage,
+    strategy: patch.strategy !== undefined ? patch.strategy : cur.strategy,
+    targetSizeUsd: patch.targetSizeUsd !== undefined ? patch.targetSizeUsd : cur.targetSizeUsd,
+    currency: patch.currency ?? cur.currency,
+    status: patch.status ?? cur.status,
+    updatedAt: new Date().toISOString(),
+  }
+  const copy = [...rows]
+  copy[idx] = next
+  writeMockFunds(copy)
+  return next
+}
 
 function restrictionConflictsDeal(
   r: ExtractedRestriction,
@@ -46,53 +130,79 @@ function restrictionConflictsDeal(
   const geo = deal.geography.toLowerCase()
   const tags = deal.structureTags ?? []
 
-  if (
-    s.includes('prohibited transaction') &&
-    tags.includes('affiliate_sponsor')
-  ) {
+  // ── Structural tags ────────────────────────────────────────────────────────
+  if (s.includes('prohibited transaction') && tags.includes('affiliate_sponsor')) {
     return 'ERISA / plan asset analysis may be required (affiliate economics).'
   }
-  if (
-    s.includes('advisory committee') &&
-    s.includes('affiliate') &&
-    tags.includes('affiliate_sponsor')
-  ) {
+  if (s.includes('advisory committee') && s.includes('affiliate') && tags.includes('affiliate_sponsor')) {
     return 'LPA requires Advisory Committee disclosure for sponsor-affiliate transactions.'
   }
 
+  // ── Sector ─────────────────────────────────────────────────────────────────
   if (r.category === 'sector') {
-    if (
-      s.includes('fossil') &&
-      (sector.includes('upstream') ||
-        sector.includes('midstream') ||
-        sector.includes('oil') ||
-        sector.includes('gas'))
-    ) {
+    if (s.includes('fossil') && (sector.includes('upstream') || sector.includes('midstream') || sector.includes('oil') || sector.includes('gas'))) {
       return 'Fossil fuel / hydrocarbon restriction applies to this sector profile.'
     }
-    if (
-      s.includes('gambling') &&
-      (sector.includes('gaming') || sector.includes('casino'))
-    ) {
+    if (s.includes('gambling') && (sector.includes('gaming') || sector.includes('casino'))) {
       return 'Gaming exposure requires consent workflow per side letter.'
     }
   }
 
+  // ── Geography ──────────────────────────────────────────────────────────────
   if (r.category === 'geography') {
-    if (s.includes('sanction') && geo.includes('iran')) {
-      return 'Sanctions geography restriction triggered.'
-    }
-    if (s.includes('country x') && geo.includes('country x')) {
-      return 'Country X prohibition applies.'
+    if (s.includes('sanction') && geo.includes('iran')) return 'Sanctions geography restriction triggered.'
+    if (s.includes('country x') && geo.includes('country x')) return 'Country X prohibition applies.'
+  }
+
+  // ── ESG ────────────────────────────────────────────────────────────────────
+  if (r.category === 'esg') {
+    if (s.includes('thermal coal') && deal.esgFlags.includes('coal_exposure')) {
+      return 'Thermal coal ESG restriction applies.'
     }
   }
 
-  if (r.category === 'esg') {
-    if (
-      s.includes('thermal coal') &&
-      deal.esgFlags.includes('coal_exposure')
-    ) {
-      return 'Thermal coal ESG restriction applies.'
+  // ── Leverage ───────────────────────────────────────────────────────────────
+  if (r.category === 'leverage' && deal.leverageMultiple !== undefined) {
+    const match = s.match(/(\d+\.?\d*)\s*x/)
+    if (match) {
+      const cap = parseFloat(match[1])
+      if (deal.leverageMultiple > cap) {
+        return `Leverage of ${deal.leverageMultiple}x exceeds the ${cap}x cap per side letter.`
+      }
+    }
+  }
+
+  // ── EBITDA minimum ─────────────────────────────────────────────────────────
+  if (r.category === 'ebitda' && deal.ebitdaUsd !== undefined) {
+    const match = s.match(/\$(\d+(?:\.\d+)?)\s*[mM]/)
+    if (match) {
+      const minUsd = parseFloat(match[1]) * 1_000_000
+      if (deal.ebitdaUsd < minUsd) {
+        const fmt = (n: number) => `$${(n / 1_000_000).toFixed(1)}M`
+        return `LTM EBITDA of ${fmt(deal.ebitdaUsd)} is below the ${fmt(minUsd)} minimum.`
+      }
+    }
+  }
+
+  // ── Deal type ──────────────────────────────────────────────────────────────
+  if (r.category === 'deal_type' && deal.dealType) {
+    const dt = deal.dealType.toLowerCase()
+    if (s.includes('mezzanine') && (dt.includes('mezzanine') || dt.includes('mezz'))) {
+      return `Deal type "${deal.dealType}" is restricted — mezzanine/subordinated debt prohibited.`
+    }
+    if (s.includes('second lien') && dt.includes('second lien')) {
+      return `Deal type "${deal.dealType}" is restricted — second lien debt prohibited.`
+    }
+    if (s.includes('senior secured only') && !dt.includes('first lien') && !dt.includes('unitranche') && !dt.includes('senior secured')) {
+      return `Deal type "${deal.dealType}" does not meet senior secured only requirement.`
+    }
+  }
+
+  // ── Security type ──────────────────────────────────────────────────────────
+  if (r.category === 'security_type' && deal.securityType) {
+    const st = deal.securityType.toLowerCase()
+    if ((s.includes('unsecured') || s.includes('second lien')) && (st.includes('unsecured') || st.includes('second lien'))) {
+      return `Security type "${deal.securityType}" requires prior written consent per side letter.`
     }
   }
 
@@ -133,7 +243,10 @@ function sectorConcentrationCheck(lp: LimitedPartner, deal: Deal): SectorConcent
 }
 
 export function evaluateScreeningForDeal(deal: Deal): ScreeningResult[] {
-  return limitedPartners.map((lp) => {
+  const lpsInFund = limitedPartners.filter((lp) => lp.fundId === deal.fundId)
+
+  return lpsInFund.map((lp) => {
+    const instrumentOrder = getEffectiveInstrumentOrder(deal.fundId, lp.id)
     const lpRestrictions = restrictions.filter(
       (x) => x.lpId === null || x.lpId === lp.id,
     )
@@ -148,12 +261,16 @@ export function evaluateScreeningForDeal(deal: Deal): ScreeningResult[] {
           instrumentKind: r.instrumentKind,
           legalDocumentId: r.legalDocumentId,
           instrumentTitle: doc?.title ?? r.legalDocumentId,
-          precedenceRank: r.precedenceRank,
+          precedenceRank: precedenceSortIndex(r.instrumentKind, instrumentOrder),
         })
       }
     }
 
-    hits.sort((a, b) => a.precedenceRank - b.precedenceRank)
+    hits.sort((a, b) => {
+      const d = a.precedenceRank - b.precedenceRank
+      if (d !== 0) return d
+      return a.restrictionId.localeCompare(b.restrictionId)
+    })
 
     const concentrationHits = sectorConcentrationCheck(lp, deal)
 
@@ -209,6 +326,12 @@ export function getDealById(id: string): Deal | undefined {
 export function listDeals(fundId?: string): Deal[] {
   if (!fundId) return deals
   return deals.filter((d) => d.fundId === fundId)
+}
+
+export function createDeal(input: Omit<Deal, 'id'>): Deal {
+  const deal: Deal = { ...input, id: `deal-${Date.now()}` }
+  deals.push(deal)
+  return deal
 }
 
 export function listLPs(fundId?: string): LimitedPartner[] {
@@ -427,10 +550,44 @@ export function updateLpCommitment(
   commitmentUsd: number,
   fundedUsd: number,
 ): LimitedPartner | undefined {
+  return updateLimitedPartner(lpId, { commitmentUsd, fundedUsd })
+}
+
+export function createLimitedPartner(input: {
+  name: string
+  fundId?: string
+  entityType?: string
+  commitmentUsd?: number
+}): LimitedPartner {
+  const lp: LimitedPartner = {
+    id: `lp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+    fundId: input.fundId ?? '',
+    name: input.name,
+    investorType: input.entityType ?? 'unknown',
+    commitmentUsd: input.commitmentUsd ?? 0,
+    fundedUsd: 0,
+  }
+  limitedPartners.push(lp)
+  return lp
+}
+
+export function updateLimitedPartner(
+  lpId: string,
+  patch: {
+    name?: string
+    fundId?: string
+    entityType?: string
+    commitmentUsd?: number
+    fundedUsd?: number
+  },
+): LimitedPartner | undefined {
   const lp = limitedPartners.find((x) => x.id === lpId)
   if (!lp) return undefined
-  lp.commitmentUsd = commitmentUsd
-  lp.fundedUsd = fundedUsd
+  if (patch.name !== undefined) lp.name = patch.name
+  if (patch.fundId !== undefined) lp.fundId = patch.fundId
+  if (patch.entityType !== undefined) lp.investorType = patch.entityType
+  if (patch.commitmentUsd !== undefined) lp.commitmentUsd = patch.commitmentUsd
+  if (patch.fundedUsd !== undefined) lp.fundedUsd = patch.fundedUsd
   return lp
 }
 

@@ -16,6 +16,7 @@ import { LpCapacityDetail } from './pages/capacity/LpCapacityDetail'
 import { AuditLog } from './pages/compliance/AuditLog'
 import { Reports } from './pages/compliance/Reports'
 import { SignOffs } from './pages/compliance/SignOffs'
+import { InstrumentPrecedence } from './pages/settings/InstrumentPrecedence'
 import { Integrations } from './pages/settings/Integrations'
 import { Roles } from './pages/settings/Roles'
 import { Users } from './pages/settings/Users'
@@ -61,6 +62,14 @@ export default function App() {
           <Route path="reports" element={<Reports />} />
           <Route path="obligations" element={<ObligationRegistry />} />
         </Route>
+        <Route
+          path="settings/instrument-precedence"
+          element={
+            <RequireRole permission="nav:instrument_precedence">
+              <InstrumentPrecedence />
+            </RequireRole>
+          }
+        />
         <Route
           path="settings/integrations"
           element={

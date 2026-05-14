@@ -54,7 +54,15 @@ export interface LegalDocument {
 /** @deprecated Use LegalDocument — identical shape */
 export type SideLetterDocument = LegalDocument
 
-export type RestrictionCategory = 'sector' | 'geography' | 'esg' | 'other'
+export type RestrictionCategory =
+  | 'sector'
+  | 'geography'
+  | 'esg'
+  | 'leverage'
+  | 'ebitda'
+  | 'deal_type'
+  | 'security_type'
+  | 'other'
 
 export type RestrictionSeverity = 'hard' | 'soft'
 
@@ -89,6 +97,32 @@ export interface Deal {
   structureTags?: string[]
   proposedAmountUsd: number
   pipelineStage: string
+
+  // ── Financial metrics (from DealCloud: LTMAdjEBITDA, LTMRevenue, etc.) ──
+  /** LTM Adjusted EBITDA in USD */
+  ebitdaUsd?: number
+  /** LTM Total Revenue in USD */
+  revenueUsd?: number
+  /** Net leverage multiple (Total Debt / EBITDA) */
+  leverageMultiple?: number
+  /** Loan-to-value ratio as a percentage (0–100) */
+  ltvPct?: number
+  /** First-lien attachment point as a leverage turn */
+  attachmentPoint?: number
+  /** Last-dollar detachment point as a leverage turn */
+  detachmentPoint?: number
+
+  // ── Deal structure (from DealCloud: DealType, SecurityDescription, etc.) ──
+  /** e.g. "First Lien Term Loan", "Second Lien", "Mezzanine", "Unitranche" */
+  dealType?: string
+  /** e.g. "Senior Secured", "Senior Unsecured", "Subordinated" */
+  securityType?: string
+  /** Whether the deal is sponsor-backed */
+  sponsored?: boolean
+  /** Whether there is an equity co-investment component */
+  coInvest?: boolean
+  /** Public or private company */
+  publicOrPrivate?: 'public' | 'private'
 }
 
 export type ScreeningOutcome = 'eligible' | 'ineligible' | 'needs_review'
@@ -99,6 +133,7 @@ export interface ScreeningRestrictionHit {
   instrumentKind: LegalInstrumentKind
   legalDocumentId: string
   instrumentTitle: string
+  /** 0-based index into the fund’s instrument order; display as Priority (index + 1). */
   precedenceRank: number
 }
 

@@ -11,6 +11,7 @@ import {
   Scale,
   Settings,
   ShieldCheck,
+  ListOrdered,
 } from 'lucide-react'
 import { PERSONA_LABEL } from '../domain/personas'
 import { can, type Permission } from '../domain/access'
@@ -36,6 +37,7 @@ const nav: NavItem[] = [
   { to: '/instruments',         label: 'Legal Instruments', icon: FileStack },
   { to: '/obligations',         label: 'Obligations',       icon: ClipboardList },
   { to: '/deals',               label: 'Deal Screening',    icon: Scale,        permission: 'nav:deals' },
+  { to: '/settings/instrument-precedence', label: 'Instrument precedence', icon: ListOrdered, permission: 'nav:instrument_precedence' },
   { to: '/capacity',            label: 'Capacity',          icon: BarChart3 },
   { to: '/compliance',          label: 'Compliance',        icon: ShieldCheck },
   { to: '/settings/integrations', label: 'Integrations',   icon: Link2,        permission: 'nav:integrations', group: 'Admin' },

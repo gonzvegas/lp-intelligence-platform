@@ -7,6 +7,7 @@ import type {
   Fund,
   IntegrationStatus,
   LegalDocument,
+  LegalInstrumentKind,
   LimitedPartner,
   Obligation,
   ReportJob,
@@ -17,6 +18,14 @@ import type {
   SignOff,
   UserAccount,
 } from '../domain/types'
+import {
+  clearFundInstrumentOrder,
+  clearLpInstrumentOrder,
+  getFundInstrumentOrder,
+  getLpInstrumentOrderOverride,
+  setFundInstrumentOrder,
+  setLpInstrumentOrder,
+} from '../domain/instrumentPrecedenceStorage'
 import * as handlers from '../mocks/handlers'
 
 // ---------------------------------------------------------------------------
@@ -181,12 +190,24 @@ function mapIntegration(r: any): IntegrationStatus {
 export const api = {
   // --- Funds ---
   async listFunds(): Promise<Fund[]> {
-    if (USE_MOCKS) return delay([])
+    if (USE_MOCKS) return delay(handlers.listFunds())
     const rows = await get<unknown[]>('/funds')
     return rows.map(mapFund)
   },
 
   async createFund(body: { name: string; vintage?: string; strategy?: string; targetSizeUsd?: number; currency?: string; status?: string }): Promise<Fund> {
+    if (USE_MOCKS) {
+      return delay(
+        handlers.createFund({
+          name: body.name,
+          vintage: body.vintage ?? null,
+          strategy: body.strategy ?? null,
+          targetSizeUsd: body.targetSizeUsd ?? null,
+          currency: body.currency ?? 'USD',
+          status: body.status ?? 'fundraising',
+        }),
+      )
+    }
     const r = await post<unknown>('/funds', {
       name: body.name,
       vintage: body.vintage,
@@ -198,7 +219,55 @@ export const api = {
     return mapFund(r)
   },
 
+  async updateFund(
+    fundId: string,
+    body: {
+      name: string
+      vintage?: string
+      strategy?: string
+      targetSizeUsd?: number | null
+      currency?: string
+      status?: string
+    },
+  ): Promise<Fund | null> {
+    if (USE_MOCKS) {
+      return delay(
+        handlers.updateFund(fundId, {
+          name: body.name,
+          vintage: body.vintage ?? null,
+          strategy: body.strategy ?? null,
+          targetSizeUsd: body.targetSizeUsd ?? null,
+          currency: body.currency ?? 'USD',
+          status: body.status ?? 'fundraising',
+        }) ?? null,
+      )
+    }
+    try {
+      const r = await patch<unknown>(`/funds/${encodeURIComponent(fundId)}`, {
+        name: body.name,
+        vintage: body.vintage,
+        strategy: body.strategy,
+        target_size_usd: body.targetSizeUsd,
+        currency: body.currency ?? 'USD',
+        status: body.status ?? 'fundraising',
+      })
+      return mapFund(r)
+    } catch {
+      return null
+    }
+  },
+
   async createLP(body: { name: string; fundId?: string; entityType?: string; jurisdiction?: string; commitmentUsd?: number }): Promise<LimitedPartner> {
+    if (USE_MOCKS) {
+      return delay(
+        handlers.createLimitedPartner({
+          name: body.name,
+          fundId: body.fundId,
+          entityType: body.entityType,
+          commitmentUsd: body.commitmentUsd,
+        }),
+      )
+    }
     const r = await post<unknown>('/lps', {
       name: body.name,
       fund_id: body.fundId,
@@ -211,7 +280,15 @@ export const api = {
   },
 
   async updateLP(lpId: string, body: { name?: string; fundId?: string; entityType?: string; jurisdiction?: string; commitmentUsd?: number; fundedUsd?: number }): Promise<LimitedPartner | null> {
-    if (USE_MOCKS) return delay(handlers.updateLpCommitment(lpId, body.commitmentUsd ?? 0, body.fundedUsd ?? 0) ?? null)
+    if (USE_MOCKS) {
+      const patch: Parameters<typeof handlers.updateLimitedPartner>[1] = {}
+      if (body.name !== undefined) patch.name = body.name
+      if (body.fundId !== undefined) patch.fundId = body.fundId
+      if (body.entityType !== undefined) patch.entityType = body.entityType
+      if (body.commitmentUsd !== undefined) patch.commitmentUsd = body.commitmentUsd
+      if (body.fundedUsd !== undefined) patch.fundedUsd = body.fundedUsd
+      return delay(handlers.updateLimitedPartner(lpId, patch) ?? null)
+    }
     try {
       const r = await patch<unknown>(`/lps/${lpId}`, {
         name: body.name,
@@ -260,6 +337,84 @@ export const api = {
       const r = await get<unknown>(`/deals/${id}`)
       return mapDeal(r)
     } catch { return undefined }
+  },
+
+  async createDeal(input: Omit<Deal, 'id'>): Promise<Deal> {
+    if (USE_MOCKS) return delay(handlers.createDeal(input))
+    const r = await post<unknown>('/deals', input)
+    return mapDeal(r)
+  },
+
+  async getInstrumentPrecedence(fundId: string): Promise<LegalInstrumentKind[]> {
+    if (USE_MOCKS) return delay([...getFundInstrumentOrder(fundId)])
+    return []
+  },
+
+  async saveInstrumentPrecedence(
+    fundId: string,
+    order: LegalInstrumentKind[],
+  ): Promise<void> {
+    if (USE_MOCKS) {
+      setFundInstrumentOrder(fundId, order)
+      return delay(undefined)
+    }
+    await post(`/funds/${encodeURIComponent(fundId)}/instrument-precedence`, {
+      instrument_order: order,
+    })
+  },
+
+  async clearInstrumentPrecedence(fundId: string): Promise<void> {
+    if (USE_MOCKS) {
+      clearFundInstrumentOrder(fundId)
+      return delay(undefined)
+    }
+    try {
+      await fetch(`${API_URL}/funds/${encodeURIComponent(fundId)}/instrument-precedence`, {
+        method: 'DELETE',
+      })
+    } catch {
+      /* non-mock backend may not support yet */
+    }
+  },
+
+  async getLpInstrumentPrecedenceEditor(lpId: string, fundId: string): Promise<{
+    fundOrder: LegalInstrumentKind[]
+    lpOverride: LegalInstrumentKind[] | null
+  }> {
+    if (USE_MOCKS) {
+      return delay({
+        fundOrder: [...getFundInstrumentOrder(fundId)],
+        lpOverride: getLpInstrumentOrderOverride(lpId),
+      })
+    }
+    return delay({
+      fundOrder: [...getFundInstrumentOrder(fundId)],
+      lpOverride: null,
+    })
+  },
+
+  async saveLpInstrumentPrecedence(lpId: string, order: LegalInstrumentKind[]): Promise<void> {
+    if (USE_MOCKS) {
+      setLpInstrumentOrder(lpId, order)
+      return delay(undefined)
+    }
+    await post(`/lps/${encodeURIComponent(lpId)}/instrument-precedence`, {
+      instrument_order: order,
+    })
+  },
+
+  async clearLpInstrumentPrecedence(lpId: string): Promise<void> {
+    if (USE_MOCKS) {
+      clearLpInstrumentOrder(lpId)
+      return delay(undefined)
+    }
+    try {
+      await fetch(`${API_URL}/lps/${encodeURIComponent(lpId)}/instrument-precedence`, {
+        method: 'DELETE',
+      })
+    } catch {
+      /* optional backend */
+    }
   },
 
   // --- LPs ---

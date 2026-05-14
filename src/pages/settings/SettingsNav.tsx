@@ -3,6 +3,7 @@ import { cx } from '../../util/cx'
 
 const links = [
   { to: '/settings/integrations', label: 'Integrations' },
+  { to: '/settings/instrument-precedence', label: 'Instrument precedence' },
   { to: '/settings/users', label: 'Users' },
   { to: '/settings/roles', label: 'Roles' },
 ]

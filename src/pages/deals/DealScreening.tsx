@@ -17,7 +17,7 @@ import {
 } from '../../components/ui'
 import { useFlash } from '../../components/Flash'
 import { PERSONA_LABEL } from '../../domain/personas'
-import { INSTRUMENT_LABEL, PRECEDENCE_POLICY_NOTE } from '../../domain/legal'
+import { INSTRUMENT_LABEL, PRECEDENCE_POLICY_NOTE, precedencePriorityLabel } from '../../domain/legal'
 import { can } from '../../domain/access'
 import { useAppContext } from '../../context/AppContext'
 import { formatDate, formatUsd } from '../../util/format'
@@ -126,37 +126,100 @@ export function DealScreening() {
         }
       />
 
-      <div className="mb-4 flex flex-wrap gap-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-sm">
-        <div>
-          <span className="text-[var(--color-ink-muted)]">Sector </span>
-          <span className="font-medium">{deal.sector}</span>
+      <div className="mb-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-sm">
+        <div className="flex flex-wrap gap-x-6 gap-y-2">
+          <div>
+            <span className="text-[var(--color-ink-muted)]">Sector </span>
+            <span className="font-medium">{deal.sector}</span>
+          </div>
+          <div>
+            <span className="text-[var(--color-ink-muted)]">Geography </span>
+            <span className="font-medium">{deal.geography}</span>
+          </div>
+          <div>
+            <span className="text-[var(--color-ink-muted)]">Stage </span>
+            <Badge tone="neutral">{deal.pipelineStage}</Badge>
+          </div>
+          <div>
+            <span className="text-[var(--color-ink-muted)]">ESG flags </span>
+            <span className="font-medium">{deal.esgFlags.length ? deal.esgFlags.join(', ') : 'None'}</span>
+          </div>
+          {deal.structureTags?.length ? (
+            <div>
+              <span className="text-[var(--color-ink-muted)]">Structure </span>
+              <span className="font-medium">{deal.structureTags.join(', ')}</span>
+            </div>
+          ) : null}
         </div>
-        <div>
-          <span className="text-[var(--color-ink-muted)]">Geography </span>
-          <span className="font-medium">{deal.geography}</span>
-        </div>
-        <div>
-          <span className="text-[var(--color-ink-muted)]">ESG flags </span>
-          <span className="font-medium">
-            {deal.esgFlags.length ? deal.esgFlags.join(', ') : 'None'}
-          </span>
-        </div>
-        <div>
-          <span className="text-[var(--color-ink-muted)]">Structure tags </span>
-          <span className="font-medium">
-            {deal.structureTags?.length
-              ? deal.structureTags.join(', ')
-              : 'None'}
-          </span>
-        </div>
-        <div>
-          <span className="text-[var(--color-ink-muted)]">Stage </span>
-          <Badge tone="neutral">{deal.pipelineStage}</Badge>
+
+        {/* Financial metrics row */}
+        <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 border-t border-[var(--color-border)] pt-3">
+          {deal.dealType && (
+            <div>
+              <span className="text-[var(--color-ink-muted)]">Type </span>
+              <span className="font-medium">{deal.dealType}</span>
+            </div>
+          )}
+          {deal.securityType && (
+            <div>
+              <span className="text-[var(--color-ink-muted)]">Security </span>
+              <span className="font-medium">{deal.securityType}</span>
+            </div>
+          )}
+          {deal.leverageMultiple !== undefined && (
+            <div>
+              <span className="text-[var(--color-ink-muted)]">Leverage </span>
+              <span className={`font-medium ${deal.leverageMultiple > 6.5 ? 'text-red-600' : deal.leverageMultiple > 5.5 ? 'text-amber-600' : ''}`}>
+                {deal.leverageMultiple}x
+              </span>
+            </div>
+          )}
+          {deal.ebitdaUsd !== undefined && (
+            <div>
+              <span className="text-[var(--color-ink-muted)]">LTM EBITDA </span>
+              <span className="font-medium">{formatUsd(deal.ebitdaUsd)}</span>
+            </div>
+          )}
+          {deal.revenueUsd !== undefined && (
+            <div>
+              <span className="text-[var(--color-ink-muted)]">LTM Revenue </span>
+              <span className="font-medium">{formatUsd(deal.revenueUsd)}</span>
+            </div>
+          )}
+          {deal.ltvPct !== undefined && (
+            <div>
+              <span className="text-[var(--color-ink-muted)]">LTV </span>
+              <span className="font-medium">{deal.ltvPct}%</span>
+            </div>
+          )}
+          {deal.sponsored !== undefined && (
+            <div>
+              <span className="text-[var(--color-ink-muted)]">Sponsored </span>
+              <span className="font-medium">{deal.sponsored ? 'Yes' : 'No'}</span>
+            </div>
+          )}
+          {deal.coInvest !== undefined && deal.coInvest && (
+            <div>
+              <span className="text-[var(--color-ink-muted)]">Co-invest </span>
+              <Badge tone="accent">Yes</Badge>
+            </div>
+          )}
         </div>
       </div>
 
-      <Card title="Instrument precedence" subtitle="How overlapping LPA / side letter / ERISA / MFN terms are ordered for mock screening." className="mb-6">
+      <Card title="Instrument precedence" subtitle="Each LP’s restriction hits are sorted using that LP’s effective order: LP-specific setting if present, otherwise the fund default." className="mb-6">
         <p className="text-sm text-[var(--color-ink-muted)]">{PRECEDENCE_POLICY_NOTE}</p>
+        {can(persona, 'nav:instrument_precedence') ? (
+          <p className="mt-3 text-sm text-[var(--color-ink-muted)]">
+            <Link className="font-medium text-[var(--color-accent)] hover:underline" to="/settings/instrument-precedence">
+              Fund default in Settings
+            </Link>
+            {' · '}
+            <Link className="font-medium text-[var(--color-accent)] hover:underline" to="/lps">
+              LP-specific order on each LP profile
+            </Link>
+          </p>
+        ) : null}
       </Card>
 
       {run ? (
@@ -276,7 +339,9 @@ export function DealScreening() {
                           <div className="flex flex-wrap gap-2">
                             <Badge tone="neutral" className="font-mono">{h.restrictionId}</Badge>
                             <Badge tone="accent">{INSTRUMENT_LABEL[h.instrumentKind]}</Badge>
-                            <Badge tone="neutral" className="font-mono text-[10px]">rank {h.precedenceRank}</Badge>
+                            <Badge tone="neutral" className="text-[10px]">
+                              {precedencePriorityLabel(h.precedenceRank)}
+                            </Badge>
                             <Link className="text-xs font-medium text-[var(--color-accent)] hover:underline" to={`/instruments/${h.legalDocumentId}`}>
                               {h.instrumentTitle}
                             </Link>
@@ -310,20 +375,20 @@ export function DealScreening() {
                   </div>
                   <ul className="space-y-3">
                     {selected.concentrationHits.map((c) => (
-                      <li key={c.ruleId} className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                      <li key={c.ruleId} className="rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/40">
                         <div className="flex flex-wrap items-center gap-2">
                           <Badge tone="warning">{c.sectorLabel}</Badge>
                           <Badge tone="neutral" className="text-[10px]">concentration cap</Badge>
                         </div>
-                        <p className="mt-2 text-sm font-medium text-amber-900">
+                        <p className="mt-2 text-sm font-medium text-amber-900 dark:text-amber-100">
                           Adding this deal would bring {c.sectorLabel} exposure to <strong>{c.proposedPct}%</strong> of commitment — exceeds the {c.maxPct}% limit.
                         </p>
-                        <div className="mt-2 text-xs text-amber-800">
+                        <div className="mt-2 text-xs text-amber-800 dark:text-amber-200">
                           Current: {formatUsd(c.currentAmountUsd)} ({c.currentPct}%) · Proposed addition: {formatUsd(c.proposedAmountUsd)}
                         </div>
                         <Link
                           to={`/capacity/lps/${selected.lpId}`}
-                          className="mt-1 inline-block text-xs font-medium text-amber-800 hover:underline"
+                          className="mt-1 inline-block text-xs font-medium text-amber-800 hover:underline dark:text-amber-200"
                         >
                           View capacity detail →
                         </Link>

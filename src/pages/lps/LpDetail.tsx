@@ -1,11 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { Check, ChevronDown, ChevronUp, Pencil, Plus, ThumbsDown, ThumbsUp, Trash2, X } from 'lucide-react'
 import { api } from '../../api/client'
+import { InstrumentOrderList } from '../../components/InstrumentOrderList'
 import type {
   Allocation,
   ExtractedRestriction,
   LegalDocument,
+  LegalInstrumentKind,
   LimitedPartner,
   Obligation,
 } from '../../domain/types'
@@ -76,7 +78,7 @@ function AddHoldingForm({ lpId, onAdded, onClose }: AddHoldingFormProps) {
               required
               type="number"
               min={0}
-              step={100000}
+              step="any"
               className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/30"
               placeholder="e.g. 5000000"
               value={form.amountUsd}
@@ -124,6 +126,20 @@ export function LpDetail() {
   const [reviewingRestriction, setReviewingRestriction] = useState<string | null>(null)
   const [expandedRestriction, setExpandedRestriction] = useState<string | null>(null)
   const [restrictionFilter, setRestrictionFilter] = useState<'all' | 'draft' | 'confirmed' | 'rejected'>('draft')
+  const [precedenceOrder, setPrecedenceOrder] = useState<LegalInstrumentKind[]>([])
+  const [precedenceHasOverride, setPrecedenceHasOverride] = useState(false)
+  const [precedenceLoading, setPrecedenceLoading] = useState(true)
+  const [precedenceSaving, setPrecedenceSaving] = useState(false)
+
+  const movePrecedence = useCallback((idx: number, dir: -1 | 1) => {
+    setPrecedenceOrder((prev) => {
+      const j = idx + dir
+      if (j < 0 || j >= prev.length) return prev
+      const next = [...prev]
+      ;[next[idx], next[j]] = [next[j], next[idx]]
+      return next
+    })
+  }, [])
 
   useEffect(() => {
     if (!lpId) return
@@ -161,6 +177,22 @@ export function LpDetail() {
     }
   }, [lpId])
 
+  useEffect(() => {
+    if (!lp) return
+    let m = true
+    setPrecedenceLoading(true)
+    ;(async () => {
+      const { fundOrder, lpOverride } = await api.getLpInstrumentPrecedenceEditor(lp.id, lp.fundId)
+      if (!m) return
+      setPrecedenceOrder(lpOverride ? [...lpOverride] : [...fundOrder])
+      setPrecedenceHasOverride(lpOverride !== null)
+      setPrecedenceLoading(false)
+    })()
+    return () => {
+      m = false
+    }
+  }, [lp])
+
   async function removeAllocation(allocId: string) {
     setRemovingAlloc(allocId)
     try {
@@ -195,6 +227,32 @@ export function LpDetail() {
       flash('Commitment updated.')
     } finally {
       setSavingCommitment(false)
+    }
+  }
+
+  async function saveLpPrecedence() {
+    if (!lp) return
+    setPrecedenceSaving(true)
+    try {
+      await api.saveLpInstrumentPrecedence(lp.id, precedenceOrder)
+      setPrecedenceHasOverride(true)
+      flash('LP document order saved — deal screening uses this order for this investor.')
+    } finally {
+      setPrecedenceSaving(false)
+    }
+  }
+
+  async function clearLpPrecedence() {
+    if (!lp) return
+    setPrecedenceSaving(true)
+    try {
+      await api.clearLpInstrumentPrecedence(lp.id)
+      const fundOrder = await api.getInstrumentPrecedence(lp.fundId)
+      setPrecedenceOrder([...fundOrder])
+      setPrecedenceHasOverride(false)
+      flash('This LP now follows the fund default document order.')
+    } finally {
+      setPrecedenceSaving(false)
     }
   }
 
@@ -250,7 +308,7 @@ export function LpDetail() {
                 <input
                   type="number"
                   min={0}
-                  step={1000000}
+                  step="any"
                   value={commitmentDraft.commitmentUsd}
                   onChange={(e) => setCommitmentDraft((d) => ({ ...d, commitmentUsd: Number(e.target.value) }))}
                   className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/30"
@@ -261,7 +319,7 @@ export function LpDetail() {
                 <input
                   type="number"
                   min={0}
-                  step={1000000}
+                  step="any"
                   value={commitmentDraft.fundedUsd}
                   onChange={(e) => setCommitmentDraft((d) => ({ ...d, fundedUsd: Number(e.target.value) }))}
                   className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/30"
@@ -345,6 +403,56 @@ export function LpDetail() {
           >
             Full obligation registry
           </Link>
+        </Card>
+
+        <Card
+          title="Document priority for screening"
+          className="lg:col-span-2"
+          subtitle={
+            precedenceHasOverride
+              ? 'LP-specific order overrides the fund default when sorting this investor’s restriction hits.'
+              : 'Using the fund’s default order. Reorder and save here to pin an LP-specific stack.'
+          }
+          actions={
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="secondary"
+                type="button"
+                disabled={precedenceSaving || !precedenceHasOverride}
+                onClick={clearLpPrecedence}
+              >
+                Use fund default
+              </Button>
+              <Button
+                type="button"
+                disabled={precedenceSaving || precedenceLoading}
+                onClick={saveLpPrecedence}
+              >
+                {precedenceSaving ? 'Saving…' : 'Save LP order'}
+              </Button>
+            </div>
+          }
+        >
+          {precedenceLoading ? (
+            <p className="text-sm text-[var(--color-ink-muted)]">Loading…</p>
+          ) : (
+            <>
+              <p className="mb-3 text-xs text-[var(--color-ink-muted)]">
+                Top = strongest when documents overlap for this LP.{' '}
+                <Link
+                  to="/settings/instrument-precedence"
+                  className="font-medium text-[var(--color-accent)] hover:underline"
+                >
+                  Fund-wide default in Settings
+                </Link>
+              </p>
+              <InstrumentOrderList
+                order={precedenceOrder}
+                onMove={movePrecedence}
+                disabled={precedenceSaving}
+              />
+            </>
+          )}
         </Card>
 
         <Card title="Legal instruments" className="lg:col-span-2">
