@@ -16,10 +16,22 @@ class LegalDocument(Base):
     title: Mapped[str] = mapped_column(String, nullable=False)
     lp_id: Mapped[str | None] = mapped_column(String, index=True)
     fund_id: Mapped[str | None] = mapped_column(String, index=True)
+    deal_id: Mapped[str | None] = mapped_column(String, index=True)
     instrument_kind: Mapped[str | None] = mapped_column(String)
     source: Mapped[str] = mapped_column(String, default="manual")
 
+    version_number: Mapped[int] = mapped_column(Integer, default=1)
+    effective_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    supersedes_document_id: Mapped[str | None] = mapped_column(String)
+    replaced_by_document_id: Mapped[str | None] = mapped_column(String)
+
     storage_path: Mapped[str | None] = mapped_column(String)
+    storage_backend: Mapped[str | None] = mapped_column(String)
+    storage_key: Mapped[str | None] = mapped_column(String, index=True)
+    content_sha256: Mapped[str | None] = mapped_column(String(64))
+    byte_size: Mapped[int | None] = mapped_column(Integer)
+    content_type: Mapped[str | None] = mapped_column(String, default="application/pdf")
+    uploaded_by: Mapped[str | None] = mapped_column(String)
     status: Mapped[str] = mapped_column(String, default="pending")
 
     uploaded_at: Mapped[datetime] = mapped_column(

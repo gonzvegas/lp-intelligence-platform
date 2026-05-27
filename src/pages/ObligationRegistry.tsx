@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { AlertTriangle, CheckCircle2, Clock, Filter } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Clock, Filter, Plus } from 'lucide-react'
 import { api } from '../api/client'
-import type { Obligation, ObligationKind } from '../domain/types'
+import type { CreateObligationInput, LegalDocument, Obligation, ObligationKind } from '../domain/types'
 import { INSTRUMENT_LABEL } from '../domain/legal'
 import { Badge, Button, EmptyState, PageHeader } from '../components/ui'
 import { useFlash } from '../components/Flash'
 import { PERSONA_LABEL } from '../domain/personas'
 import { useAppContext } from '../context/AppContext'
+import { can } from '../domain/access'
+import { effectiveObligationStatus } from '../domain/obligationDefaults'
+import { ObligationFormModal } from '../components/ObligationFormModal'
 import { formatDate } from '../util/format'
 import { cx } from '../util/cx'
 
@@ -80,11 +83,27 @@ type KindFilter = ObligationKind | 'all'
 export function ObligationRegistry() {
   const { persona } = useAppContext()
   const flash = useFlash()
+  const canManage = can(persona, 'action:manage_obligation')
   const [rows, setRows] = useState<Obligation[]>([])
+  const [documents, setDocuments] = useState<LegalDocument[]>([])
   const [statusFilter, setStatusFilter] = useState<FilterState>('open')
   const [kindFilter, setKindFilter] = useState<KindFilter>('all')
   const [loading, setLoading] = useState(true)
   const [completing, setCompleting] = useState<string | null>(null)
+  const [formOpen, setFormOpen] = useState(false)
+
+  const blankDraft: CreateObligationInput = useMemo(() => {
+    const first = documents[0]
+    return {
+      title: '',
+      kind: 'other',
+      legalDocumentId: first?.id ?? '',
+      instrumentKind: first?.kind,
+      lpId: first?.lpId ?? null,
+      dealId: first?.dealId ?? null,
+      ownerRole: 'Compliance',
+    }
+  }, [documents])
 
   async function refresh() {
     setRows(await api.listObligations())
@@ -93,16 +112,23 @@ export function ObligationRegistry() {
   useEffect(() => {
     let m = true
     ;(async () => {
-      const data = await api.listObligations()
+      const [data, docs] = await Promise.all([
+        api.listObligations(),
+        api.listLegalDocuments(),
+      ])
       if (!m) return
       setRows(data)
+      setDocuments(docs)
       setLoading(false)
     })()
     return () => { m = false }
   }, [])
 
   const visible = useMemo(() => {
-    let r = rows
+    let r = rows.map((o) => ({
+      ...o,
+      status: effectiveObligationStatus(o.status, o.dueAt),
+    }))
     if (statusFilter === 'open') r = r.filter((o) => o.status === 'open' || o.status === 'overdue')
     if (statusFilter === 'done') r = r.filter((o) => o.status === 'done' || o.status === 'waived')
     if (kindFilter !== 'all') r = r.filter((o) => o.kind === kindFilter)
@@ -113,8 +139,10 @@ export function ObligationRegistry() {
     })
   }, [rows, statusFilter, kindFilter])
 
-  const overdueCount = rows.filter((o) => o.status === 'overdue').length
-  const openCount = rows.filter((o) => o.status === 'open').length
+  const overdueCount = rows.filter(
+    (o) => effectiveObligationStatus(o.status, o.dueAt) === 'overdue',
+  ).length
+  const openCount = rows.filter((o) => effectiveObligationStatus(o.status, o.dueAt) === 'open').length
   const doneCount = rows.filter((o) => o.status === 'done' || o.status === 'waived').length
 
   async function markDone(id: string) {
@@ -122,10 +150,19 @@ export function ObligationRegistry() {
     try {
       await api.completeObligation(id, PERSONA_LABEL[persona])
       await refresh()
-      flash('Obligation marked complete — audit event logged.')
+      flash('Obligation marked complete.')
     } finally {
       setCompleting(null)
     }
+  }
+
+  async function createObligation(values: CreateObligationInput) {
+    await api.createObligation({
+      ...values,
+      createdBy: PERSONA_LABEL[persona],
+    })
+    await refresh()
+    flash('Obligation created.')
   }
 
   return (
@@ -133,6 +170,14 @@ export function ObligationRegistry() {
       <PageHeader
         title="Obligation registry"
         description="Operating path: consents, notices, MFN windows, ERISA reporting, and co-invest mechanics."
+        actions={
+          canManage && documents.length > 0 ? (
+            <Button type="button" onClick={() => setFormOpen(true)}>
+              <Plus size={14} />
+              Add obligation
+            </Button>
+          ) : undefined
+        }
       />
 
       {/* Summary stats */}
@@ -299,6 +344,17 @@ export function ObligationRegistry() {
           </table>
         </div>
       )}
+
+      {canManage && documents.length > 0 ? (
+        <ObligationFormModal
+          open={formOpen}
+          title="Add obligation"
+          initial={blankDraft}
+          documents={documents}
+          onClose={() => setFormOpen(false)}
+          onSubmit={createObligation}
+        />
+      ) : null}
     </div>
   )
 }

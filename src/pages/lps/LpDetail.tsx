@@ -132,6 +132,9 @@ export function LpDetail() {
   const [precedenceHasOverride, setPrecedenceHasOverride] = useState(false)
   const [precedenceLoading, setPrecedenceLoading] = useState(true)
   const [precedenceSaving, setPrecedenceSaving] = useState(false)
+  const [uploadingKind, setUploadingKind] = useState<LegalInstrumentKind | null>(null)
+  /** Document IDs from uploads/replaces in Document priority (this session); drives progress panel below. */
+  const [recentUploadIds, setRecentUploadIds] = useState<string[]>([])
 
   const movePrecedence = useCallback((idx: number, dir: -1 | 1) => {
     setPrecedenceOrder((prev) => {
@@ -180,6 +183,10 @@ export function LpDetail() {
   }, [lpId])
 
   useEffect(() => {
+    setRecentUploadIds([])
+  }, [lpId])
+
+  useEffect(() => {
     if (!lp) return
     let m = true
     setPrecedenceLoading(true)
@@ -221,6 +228,70 @@ export function LpDetail() {
     const unallocatedPct = commitment > 0 ? Math.max(0, 100 - (allocatedTotal / commitment) * 100) : 0
     return { rows, commitment, allocatedTotal, unallocatedPct }
   }, [allocations, lp])
+
+  const reloadInstrumentList = useCallback(async () => {
+    if (!lpId) return
+    const docs = await api.listLegalDocuments().catch(() => [])
+    setInstruments(
+      docs.filter(
+        (d) =>
+          d.lpId === lpId ||
+          (d.lpId === null && ['lpa', 'ima'].includes(d.kind)),
+      ),
+    )
+  }, [lpId])
+
+  const instrumentDocByKind = useMemo(() => {
+    const m: Partial<Record<LegalInstrumentKind, LegalDocument>> = {}
+    for (const d of instruments) {
+      const cur = m[d.kind]
+      if (!cur || new Date(d.uploadedAt) > new Date(cur.uploadedAt)) m[d.kind] = d
+    }
+    return m
+  }, [instruments])
+
+  const uploadLpInstrument = useCallback(
+    async (instrumentKind: LegalInstrumentKind, file: File) => {
+      if (!lp || !lpId) return
+      if (!file.name.toLowerCase().endsWith('.pdf') && file.type !== 'application/pdf') {
+        flash('Please upload a PDF.')
+        return
+      }
+      setUploadingKind(instrumentKind)
+      try {
+        const doc = await api.uploadLegalDocument(lpId, file, {
+          fundId: lp.fundId || undefined,
+          instrumentKind,
+        })
+        setRecentUploadIds((prev) =>
+          [doc.id, ...prev.filter((id) => id !== doc.id)].slice(0, 30),
+        )
+        await reloadInstrumentList()
+        flash('Uploaded — document pipeline queued.')
+      } catch {
+        flash('Upload failed. Is the API running and Celery worker up?')
+      } finally {
+        setUploadingKind(null)
+      }
+    },
+    [flash, lp, lpId, reloadInstrumentList],
+  )
+
+  const needsProgressPolling = useMemo(
+    () =>
+      instruments.some(
+        (d) => recentUploadIds.includes(d.id) && d.reviewStatus === 'processing',
+      ),
+    [instruments, recentUploadIds],
+  )
+
+  useEffect(() => {
+    if (!lpId || !needsProgressPolling) return
+    const t = window.setInterval(() => {
+      void reloadInstrumentList()
+    }, 4000)
+    return () => window.clearInterval(t)
+  }, [lpId, needsProgressPolling, reloadInstrumentList])
 
   async function removeAllocation(allocId: string) {
     setRemovingAlloc(allocId)
@@ -467,54 +538,75 @@ export function LpDetail() {
           ) : (
             <>
               <p className="mb-3 text-xs text-[var(--color-ink-muted)]">
-                Top = strongest when documents overlap for this LP.{' '}
-                <Link
-                  to="/settings/instrument-precedence"
-                  className="font-medium text-[var(--color-accent)] hover:underline"
-                >
-                  Fund-wide default in Settings
-                </Link>
+                Top = strongest when terms overlap for this LP. Upload each PDF beside its type — the pipeline starts automatically after save.
+                Reordering only affects priority, not ingestion. Edit the{' '}
+                <Link to="/settings/instrument-precedence" className="font-medium text-[var(--color-accent)] hover:underline">
+                  fund-wide default order in Settings
+                </Link>{' '}
+                when policy changes apply to everyone.
               </p>
               <InstrumentOrderList
                 order={precedenceOrder}
                 onMove={movePrecedence}
                 disabled={precedenceSaving}
+                documentByKind={instrumentDocByKind}
+                onPickUpload={(kind, file) => void uploadLpInstrument(kind, file)}
+                uploadingKind={uploadingKind}
               />
             </>
           )}
         </Card>
 
-        <Card title="Legal instruments" className="lg:col-span-2">
-          {instruments.length === 0 ? (
-            <EmptyState title="No instruments linked" hint="LPA/IMA apply fund-wide; LP-specific docs attach here." />
+        <Card
+          title="Upload progress"
+          className="lg:col-span-2"
+          subtitle="Only tracks documents uploaded or replaced in Document priority above. Use Legal instruments in the nav for the fund-wide catalog."
+        >
+          {recentUploadIds.length === 0 ? (
+            <EmptyState
+              title="No uploads yet this visit"
+              hint="Upload or replace a PDF next to an instrument above — ingestion and extraction status will show here."
+            />
           ) : (
             <ul className="space-y-3">
-              {instruments.map((doc) => (
-                <li
-                  key={doc.id}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--color-border)] px-3 py-2"
-                >
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Link
-                      className="font-medium text-[var(--color-accent)] hover:underline"
-                      to={`/instruments/${doc.id}`}
+              {recentUploadIds.map((id, idx) => {
+                const doc = instruments.find((d) => d.id === id)
+                if (!doc) {
+                  return (
+                    <li
+                      key={id}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-muted)]/40 px-3 py-2 text-sm text-[var(--color-ink-muted)]"
                     >
-                      {doc.title}
-                    </Link>
-                    <Badge tone="accent">{INSTRUMENT_LABEL[doc.kind]}</Badge>
-                  </div>
-                  <ReviewBadge status={doc.reviewStatus} />
-                </li>
-              ))}
+                      <span className="font-mono text-xs">Queued — refreshing list…</span>
+                      <Badge tone="neutral">Starting</Badge>
+                    </li>
+                  )
+                }
+                return (
+                  <li
+                    key={doc.id}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--color-border)] px-3 py-2"
+                  >
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                      <Link
+                        className="truncate font-medium text-[var(--color-accent)] hover:underline"
+                        to={`/instruments/${doc.id}`}
+                      >
+                        {doc.title}
+                      </Link>
+                      <Badge tone="accent">{INSTRUMENT_LABEL[doc.kind]}</Badge>
+                      {idx === 0 ? (
+                        <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-accent)]">
+                          Latest
+                        </span>
+                      ) : null}
+                    </div>
+                    <ReviewBadge status={doc.reviewStatus} />
+                  </li>
+                )
+              })}
             </ul>
           )}
-          <button
-            type="button"
-            className="mt-4 w-full rounded-lg border border-dashed border-[var(--color-border)] py-2 text-sm font-medium text-[var(--color-ink-muted)]"
-            disabled
-          >
-            Upload instrument PDF — available after document pipeline
-          </button>
         </Card>
 
         <Card

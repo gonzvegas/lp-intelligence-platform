@@ -269,11 +269,11 @@ export function LpCapacityDetail() {
               </div>
               <div className="flex justify-between gap-4">
                 <dt className="text-[var(--color-ink-muted)]">Called to date</dt>
-                <dd className="font-medium">− {formatUsd(lp.fundedUsd)}</dd>
+                <dd className="font-medium">− {formatUsd(snap.deployedUsd)}</dd>
               </div>
               <div className="flex justify-between gap-4 rounded-lg bg-emerald-50 px-2 py-1.5 -mx-2">
                 <dt className="font-semibold text-emerald-800">Uncalled (still owed)</dt>
-                <dd className="font-bold text-emerald-700">{formatUsd(lp.commitmentUsd - lp.fundedUsd)}</dd>
+                <dd className="font-bold text-emerald-700">{formatUsd(snap.remainingCommitmentUsd)}</dd>
               </div>
               <p className="text-[10px] text-[var(--color-ink-muted)]">
                 Uncalled = Total commitment − Called to date

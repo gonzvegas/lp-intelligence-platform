@@ -31,7 +31,7 @@ type NavItem = {
 }
 
 const nav: NavItem[] = [
-  { to: '/',                    label: 'Dashboard',         icon: LayoutDashboard, end: true },
+  { to: '/dashboard',            label: 'Dashboard',         icon: LayoutDashboard, end: true },
   { to: '/funds',               label: 'Funds',             icon: Briefcase },
   { to: '/lps',                 label: 'LP Management',     icon: Building2 },
   { to: '/instruments',         label: 'Legal Instruments', icon: FileStack },
@@ -50,8 +50,6 @@ export function Sidebar() {
   const visible = nav.filter(
     (item) => !item.permission || can(persona as PersonaId, item.permission),
   )
-
-  let lastGroup: string | undefined = undefined
 
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)]">
@@ -75,9 +73,9 @@ export function Sidebar() {
 
       {/* Nav */}
       <nav className="flex-1 space-y-0.5 px-3 py-4">
-        {visible.map((item) => {
-          const showGroup = item.group && item.group !== lastGroup
-          if (showGroup) lastGroup = item.group
+        {visible.map((item, i) => {
+          const prev = visible[i - 1]
+          const showGroup = Boolean(item.group && (!prev || prev.group !== item.group))
 
           return (
             <div key={item.to}>

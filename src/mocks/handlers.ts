@@ -8,14 +8,14 @@ import type {
   Fund,
   IntegrationStatus,
   LegalDocument,
+  LegalInstrumentKind,
   LimitedPartner,
   Obligation,
+  CreateObligationInput,
   ReportJob,
   Role,
-  ScreeningRestrictionHit,
   ScreeningResult,
   ScreeningRun,
-  SectorConcentrationHit,
   SectorConcentrationRule,
   SignOff,
   SyncJob,
@@ -38,9 +38,13 @@ import {
   signOffs,
   syncJobs,
   users,
+  seedFunds,
 } from './fixtures'
 import { getEffectiveInstrumentOrder } from '../domain/instrumentPrecedenceStorage'
-import { precedenceSortIndex } from '../domain/legal'
+import {
+  createScreeningRun as createScreeningRunCore,
+  evaluateScreeningForDeal as evaluateScreeningForDealCore,
+} from '../domain/screeningEvaluate'
 
 /** Persisted fund registry for mock / offline UI — same source as Fund Management page. */
 const MOCK_FUNDS_KEY = 'lip.mockFunds'
@@ -48,12 +52,24 @@ const MOCK_FUNDS_KEY = 'lip.mockFunds'
 function readMockFunds(): Fund[] {
   try {
     const raw = localStorage.getItem(MOCK_FUNDS_KEY)
-    if (!raw) return []
+    if (!raw) {
+      writeMockFunds(seedFunds)
+      return [...seedFunds]
+    }
     const parsed = JSON.parse(raw) as Fund[]
-    if (!Array.isArray(parsed)) return []
-    return parsed.filter((f) => f && typeof f.id === 'string' && typeof f.name === 'string')
+    if (!Array.isArray(parsed)) {
+      writeMockFunds(seedFunds)
+      return [...seedFunds]
+    }
+    const rows = parsed.filter((f) => f && typeof f.id === 'string' && typeof f.name === 'string')
+    if (rows.length === 0) {
+      writeMockFunds(seedFunds)
+      return [...seedFunds]
+    }
+    return rows
   } catch {
-    return []
+    writeMockFunds(seedFunds)
+    return [...seedFunds]
   }
 }
 
@@ -123,202 +139,36 @@ export function updateFund(
   return next
 }
 
-function restrictionConflictsDeal(
-  r: ExtractedRestriction,
-  deal: Deal,
-): string | null {
-  const s = r.summary.toLowerCase()
-  const sector = deal.sector.toLowerCase()
-  const geo = deal.geography.toLowerCase()
-  const tags = deal.structureTags ?? []
-
-  // ── Structural tags ────────────────────────────────────────────────────────
-  if (s.includes('prohibited transaction') && tags.includes('affiliate_sponsor')) {
-    return 'ERISA / plan asset analysis may be required (affiliate economics).'
+function screeningContextForFund(fundId: string) {
+  const lpsInFund = limitedPartners.filter((lp) => lp.fundId === fundId)
+  const allocationsByLp: Record<string, Allocation[]> = {}
+  for (const lp of lpsInFund) {
+    allocationsByLp[lp.id] = allocations.filter((a) => a.lpId === lp.id)
   }
-  if (s.includes('advisory committee') && s.includes('affiliate') && tags.includes('affiliate_sponsor')) {
-    return 'LPA requires Advisory Committee disclosure for sponsor-affiliate transactions.'
+  return {
+    lps: lpsInFund,
+    restrictions,
+    allocationsByLp,
+    sectorConcentrationRules,
+    legalDocuments,
+    getInstrumentOrder: getEffectiveInstrumentOrder,
   }
-
-  // ── Sector ─────────────────────────────────────────────────────────────────
-  if (r.category === 'sector') {
-    if (s.includes('fossil') && (sector.includes('upstream') || sector.includes('midstream') || sector.includes('oil') || sector.includes('gas'))) {
-      return 'Fossil fuel / hydrocarbon restriction applies to this sector profile.'
-    }
-    if (s.includes('gambling') && (sector.includes('gaming') || sector.includes('casino'))) {
-      return 'Gaming exposure requires consent workflow per side letter.'
-    }
-  }
-
-  // ── Geography ──────────────────────────────────────────────────────────────
-  if (r.category === 'geography') {
-    if (s.includes('sanction') && geo.includes('iran')) return 'Sanctions geography restriction triggered.'
-    if (s.includes('country x') && geo.includes('country x')) return 'Country X prohibition applies.'
-  }
-
-  // ── ESG ────────────────────────────────────────────────────────────────────
-  if (r.category === 'esg') {
-    if (s.includes('thermal coal') && deal.esgFlags.includes('coal_exposure')) {
-      return 'Thermal coal ESG restriction applies.'
-    }
-  }
-
-  // ── Leverage ───────────────────────────────────────────────────────────────
-  if (r.category === 'leverage' && deal.leverageMultiple !== undefined) {
-    const match = s.match(/(\d+\.?\d*)\s*x/)
-    if (match) {
-      const cap = parseFloat(match[1])
-      if (deal.leverageMultiple > cap) {
-        return `Leverage of ${deal.leverageMultiple}x exceeds the ${cap}x cap per side letter.`
-      }
-    }
-  }
-
-  // ── EBITDA minimum ─────────────────────────────────────────────────────────
-  if (r.category === 'ebitda' && deal.ebitdaUsd !== undefined) {
-    const match = s.match(/\$(\d+(?:\.\d+)?)\s*[mM]/)
-    if (match) {
-      const minUsd = parseFloat(match[1]) * 1_000_000
-      if (deal.ebitdaUsd < minUsd) {
-        const fmt = (n: number) => `$${(n / 1_000_000).toFixed(1)}M`
-        return `LTM EBITDA of ${fmt(deal.ebitdaUsd)} is below the ${fmt(minUsd)} minimum.`
-      }
-    }
-  }
-
-  // ── Deal type ──────────────────────────────────────────────────────────────
-  if (r.category === 'deal_type' && deal.dealType) {
-    const dt = deal.dealType.toLowerCase()
-    if (s.includes('mezzanine') && (dt.includes('mezzanine') || dt.includes('mezz'))) {
-      return `Deal type "${deal.dealType}" is restricted — mezzanine/subordinated debt prohibited.`
-    }
-    if (s.includes('second lien') && dt.includes('second lien')) {
-      return `Deal type "${deal.dealType}" is restricted — second lien debt prohibited.`
-    }
-    if (s.includes('senior secured only') && !dt.includes('first lien') && !dt.includes('unitranche') && !dt.includes('senior secured')) {
-      return `Deal type "${deal.dealType}" does not meet senior secured only requirement.`
-    }
-  }
-
-  // ── Security type ──────────────────────────────────────────────────────────
-  if (r.category === 'security_type' && deal.securityType) {
-    const st = deal.securityType.toLowerCase()
-    if ((s.includes('unsecured') || s.includes('second lien')) && (st.includes('unsecured') || st.includes('second lien'))) {
-      return `Security type "${deal.securityType}" requires prior written consent per side letter.`
-    }
-  }
-
-  return null
-}
-
-function sectorConcentrationCheck(lp: LimitedPartner, deal: Deal): SectorConcentrationHit[] {
-  const rules = sectorConcentrationRules.filter((r) => r.lpId === lp.id)
-  const lpAllocs = allocations.filter((a) => a.lpId === lp.id)
-  const hits: SectorConcentrationHit[] = []
-
-  for (const rule of rules) {
-    const pattern = rule.sectorPattern.toLowerCase()
-    const matchesDeal = deal.sector.toLowerCase().includes(pattern)
-    if (!matchesDeal) continue
-
-    const currentAmount = lpAllocs
-      .filter((a) => a.sector.toLowerCase().includes(pattern))
-      .reduce((sum, a) => sum + a.amountUsd, 0)
-
-    const currentPct = (currentAmount / lp.commitmentUsd) * 100
-    const proposedPct = ((currentAmount + deal.proposedAmountUsd) / lp.commitmentUsd) * 100
-
-    if (proposedPct > rule.maxPct) {
-      hits.push({
-        ruleId: rule.id,
-        sectorLabel: rule.sectorLabel,
-        maxPct: rule.maxPct,
-        currentPct: Math.round(currentPct * 10) / 10,
-        proposedPct: Math.round(proposedPct * 10) / 10,
-        currentAmountUsd: currentAmount,
-        proposedAmountUsd: deal.proposedAmountUsd,
-      })
-    }
-  }
-
-  return hits
 }
 
 export function evaluateScreeningForDeal(deal: Deal): ScreeningResult[] {
-  const lpsInFund = limitedPartners.filter((lp) => lp.fundId === deal.fundId)
-
-  return lpsInFund.map((lp) => {
-    const instrumentOrder = getEffectiveInstrumentOrder(deal.fundId, lp.id)
-    const lpRestrictions = restrictions.filter(
-      (x) => x.lpId === null || x.lpId === lp.id,
-    )
-    const hits: ScreeningRestrictionHit[] = []
-    for (const r of lpRestrictions) {
-      const reason = restrictionConflictsDeal(r, deal)
-      if (reason) {
-        const doc = legalDocuments.find((d) => d.id === r.legalDocumentId)
-        hits.push({
-          restrictionId: r.id,
-          reason,
-          instrumentKind: r.instrumentKind,
-          legalDocumentId: r.legalDocumentId,
-          instrumentTitle: doc?.title ?? r.legalDocumentId,
-          precedenceRank: precedenceSortIndex(r.instrumentKind, instrumentOrder),
-        })
-      }
-    }
-
-    hits.sort((a, b) => {
-      const d = a.precedenceRank - b.precedenceRank
-      if (d !== 0) return d
-      return a.restrictionId.localeCompare(b.restrictionId)
-    })
-
-    const concentrationHits = sectorConcentrationCheck(lp, deal)
-
-    let outcome: ScreeningResult['outcome'] = 'eligible'
-    if (hits.length || concentrationHits.length) {
-      const related = hits
-        .map((h) => lpRestrictions.find((x) => x.id === h.restrictionId))
-        .filter(Boolean) as ExtractedRestriction[]
-
-      const draftHit = related.some((x) => x.reviewStatus === 'draft')
-      const hardHit = related.some((x) => x.severity === 'hard')
-
-      if (concentrationHits.length) outcome = 'needs_review'
-      else if (draftHit) outcome = 'needs_review'
-      else if (hardHit) outcome = 'ineligible'
-      else outcome = 'needs_review'
-    }
-
-    return { lpId: lp.id, outcome, hits, concentrationHits }
-  })
-}
-
-function hashStub(deal: Deal, version: string): string {
-  const payload = `${deal.id}:${deal.sector}:${deal.geography}:${deal.proposedAmountUsd}:${version}`
-  let h = 0
-  for (let i = 0; i < payload.length; i++)
-    h = Math.imul(31, h) + payload.charCodeAt(i)
-  return `sha256-stub:${(h >>> 0).toString(16).padStart(8, '0')}`
+  return evaluateScreeningForDealCore(deal, screeningContextForFund(deal.fundId))
 }
 
 export function createScreeningRun(
   deal: Deal,
   runBy: string,
 ): ScreeningRun {
-  const results = evaluateScreeningForDeal(deal)
-  const rulePackVersion = 'rules-mock-2026.05+LPA+ERISA'
-  return {
-    id: `sr-${Date.now()}`,
-    dealId: deal.id,
-    runAt: new Date().toISOString(),
+  return createScreeningRunCore(
+    deal,
+    screeningContextForFund(deal.fundId),
     runBy,
-    inputsHash: hashStub(deal, rulePackVersion),
-    rulePackVersion,
-    verifiedBeforeIc: true,
-    results,
-  }
+    'rules-mock-2026.05+LPA+ERISA',
+  )
 }
 
 export function getDealById(id: string): Deal | undefined {
@@ -352,6 +202,39 @@ export function listLegalDocuments(fundId?: string): LegalDocument[] {
 
 export function getLegalDocumentById(id: string): LegalDocument | undefined {
   return legalDocuments.find((d) => d.id === id)
+}
+
+/** Mock-only: pretend upload — mutates fixtures list. Sets fundId from LP when omitted. */
+export function uploadLegalDocumentForLp(
+  lpId: string,
+  fileName: string,
+  opts?: { fundId?: string; instrumentKind?: LegalInstrumentKind; title?: string },
+): LegalDocument {
+  const lp = limitedPartners.find((p) => p.id === lpId)
+  const fundId =
+    opts?.fundId && opts.fundId.trim().length > 0
+      ? opts.fundId.trim()
+      : lp?.fundId ?? ''
+  const kind = opts?.instrumentKind ?? 'side_letter'
+  const baseTitle =
+    opts?.title?.trim() ||
+    fileName.replace(/\.[^/.]+$/, '').trim() ||
+    'Uploaded instrument'
+  const doc: LegalDocument = {
+    id: `doc-mock-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`,
+    fundId,
+    lpId,
+    dealId: null,
+    kind,
+    title: baseTitle,
+    uploadedAt: new Date().toISOString(),
+    reviewStatus: 'processing',
+    restrictionIds: [],
+    ingestionSource: 'manual',
+    pipelineStage: 'uploaded',
+  }
+  legalDocuments.unshift(doc)
+  return doc
 }
 
 /** @deprecated narrow catalog — prefer listLegalDocuments + filter */
@@ -397,6 +280,29 @@ export function obligationsForDocument(
   legalDocumentId: string,
 ): Obligation[] {
   return obligations.filter((o) => o.legalDocumentId === legalDocumentId)
+}
+
+export function createObligation(input: CreateObligationInput): Obligation {
+  const row: Obligation = {
+    id: `obl-${Math.random().toString(36).slice(2, 10)}`,
+    title: input.title,
+    kind: input.kind,
+    instrumentKind: input.instrumentKind ?? 'lpa',
+    lpId: input.lpId ?? null,
+    dealId: input.dealId ?? null,
+    legalDocumentId: input.legalDocumentId,
+    sourceRestrictionId: input.sourceRestrictionId,
+    sectionRef: input.sectionRef,
+    dueAt: input.dueAt ?? null,
+    recurrence: input.recurrence,
+    ownerRole: input.ownerRole ?? 'Compliance',
+    status: 'open',
+    evidenceNote: input.evidenceNote,
+    createdBy: input.createdBy,
+    createdAt: new Date().toISOString(),
+  }
+  obligations.push(row)
+  return row
 }
 
 export function completeObligation(

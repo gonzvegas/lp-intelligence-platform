@@ -14,6 +14,7 @@ export type Permission =
   | 'nav:instrument_precedence'
   | 'action:run_screening'
   | 'action:confirm_restriction'
+  | 'action:manage_obligation'
   | 'action:approve_signoff'
 
 const POLICY: Record<Permission, ReadonlySet<PersonaId>> = {
@@ -23,6 +24,7 @@ const POLICY: Record<Permission, ReadonlySet<PersonaId>> = {
   'nav:instrument_precedence': new Set(['gp', 'compliance', 'legal', 'admin', 'ir']),
   'action:run_screening':     new Set(['gp', 'compliance', 'admin']),
   'action:confirm_restriction': new Set(['compliance', 'legal', 'admin']),
+  'action:manage_obligation': new Set(['gp', 'compliance', 'legal', 'admin', 'ir']),
   'action:approve_signoff':   new Set(['compliance', 'legal', 'admin']),
 }
 

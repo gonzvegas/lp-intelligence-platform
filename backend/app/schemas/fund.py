@@ -12,6 +12,17 @@ class FundCreate(BaseModel):
     status: str = "fundraising"
 
 
+class FundPatch(BaseModel):
+    """Partial updates for PATCH /funds/{id}; only fields present in JSON are applied."""
+
+    name: str | None = None
+    vintage: str | None = None
+    strategy: str | None = None
+    target_size_usd: int | None = None
+    currency: str | None = None
+    status: str | None = None
+
+
 class FundOut(BaseModel):
     model_config = {"from_attributes": True}
 

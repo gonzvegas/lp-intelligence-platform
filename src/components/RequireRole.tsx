@@ -16,14 +16,14 @@ export function RequireRole({
 }: {
   permission: Permission
   children: React.ReactNode
-  /** If true, redirect to "/" instead of showing the inline denial page. */
+  /** If true, redirect to `/dashboard` instead of showing the inline denial page. */
   redirect?: boolean
 }) {
   const { persona } = useAppContext()
   const allowed = can(persona as PersonaId, permission)
 
   if (!allowed) {
-    if (redirect) return <Navigate to="/" replace />
+    if (redirect) return <Navigate to="/dashboard" replace />
     return <AccessDenied permission={permission} persona={persona as PersonaId} />
   }
 

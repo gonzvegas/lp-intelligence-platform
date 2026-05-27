@@ -21,9 +21,13 @@ export interface Fund {
 
 export interface LimitedPartner {
   id: string
+  /** DealCloud external id when synced */
+  externalId?: string | null
   fundId: string
   name: string
   investorType: string
+  jurisdiction?: string | null
+  lpStatus?: string
   commitmentUsd: number
   fundedUsd: number
 }
@@ -69,6 +73,8 @@ export interface LegalDocument {
   ingestionSource?: DocumentIngestionSource
   /** When omitted, UI infers from `reviewStatus`. */
   pipelineStage?: DocumentPipelineStage
+  /** True when blob storage has a PDF for this instrument. */
+  hasContent?: boolean
 }
 
 /** @deprecated Use LegalDocument — identical shape */
@@ -82,7 +88,16 @@ export type RestrictionCategory =
   | 'ebitda'
   | 'deal_type'
   | 'security_type'
+  | 'concentration'
+  | 'erisa'
+  | 'co_invest'
+  | 'reporting'
+  | 'mfn'
+  | 'instrument'
   | 'other'
+
+/** Extraction often returns coarse labels beyond the canonical union. */
+export type RestrictionCategoryInput = RestrictionCategory | (string & {})
 
 export type RestrictionSeverity = 'hard' | 'soft'
 
@@ -95,7 +110,7 @@ export interface ExtractedRestriction {
   instrumentKind: LegalInstrumentKind
   /** Lower number wins when policies conflict (organizational default — Legal confirms). */
   precedenceRank: number
-  category: RestrictionCategory
+  category: RestrictionCategoryInput
   severity: RestrictionSeverity
   summary: string
   sectionRef?: string
@@ -104,6 +119,8 @@ export interface ExtractedRestriction {
   effectiveTo?: string
   clauseText?: string
   reviewStatus: 'draft' | 'confirmed' | 'rejected'
+  /** PDF page (1-based) when extraction linked a source chunk. */
+  pageNum?: number
   /** Denormalized from parent document version at extraction time. */
   documentVersionNumber?: number
   /** Pipeline / sync batch that produced this row (traceability). */
@@ -244,20 +261,41 @@ export interface Obligation {
   lpId: string | null
   dealId: string | null
   legalDocumentId: string
+  sourceRestrictionId?: string
   sectionRef?: string
   dueAt: string | null
   recurrence?: string
   ownerRole: string
   status: 'open' | 'done' | 'waived' | 'overdue'
   evidenceNote?: string
+  createdBy?: string
+  createdAt?: string
+}
+
+export type CreateObligationInput = {
+  title: string
+  kind: ObligationKind
+  instrumentKind?: LegalInstrumentKind
+  lpId?: string | null
+  dealId?: string | null
+  legalDocumentId: string
+  sourceRestrictionId?: string
+  sectionRef?: string
+  dueAt?: string | null
+  recurrence?: string
+  ownerRole?: string
+  evidenceNote?: string
+  createdBy?: string
 }
 
 export type AuditEventType =
   | 'screening_run'
   | 'restriction_confirmed'
+  | 'restriction_rejected'
   | 'sign_off'
   | 'document_upload'
   | 'integration_sync'
+  | 'obligation_created'
   | 'obligation_completed'
   | 'sync_job_completed'
   | 'document_versioned'

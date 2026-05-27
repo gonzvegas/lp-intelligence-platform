@@ -227,7 +227,7 @@ def run_dealcloud_sync(db: Session) -> SyncResult:
 
     # --- Pull document attachments (new client — previous one is closed) ---
     with httpx.Client(timeout=30) as attachment_client:
-        _sync_attachments(attachment_client, commitment_rows, db, result)
+        _sync_attachments(attachment_client, commitment_rows, db, result, fund_map)
 
     return result
 
@@ -237,6 +237,7 @@ def _sync_attachments(
     commitment_rows: list[dict],
     db: Session,
     result: SyncResult,
+    fund_map: dict[int, str],
 ) -> None:
     """
     For each LPCommitment that has an AssociatedDocuments attachment reference,
@@ -244,13 +245,16 @@ def _sync_attachments(
     the document_pipeline task.
     """
     import os
+    import hashlib
     import uuid
 
     from app.config import settings
     from app.models.document import LegalDocument
+    from app.storage import get_document_storage
+    from app.storage.keys import build_document_storage_key
     from app.workers.tasks import document_pipeline
 
-    os.makedirs(settings.docs_storage_path, exist_ok=True)
+    storage = get_document_storage()
 
     for row in commitment_rows:
         attachment_ref = row.get("AssociatedDocuments")
@@ -269,7 +273,17 @@ def _sync_attachments(
             continue
 
         iv_ref = row.get("InvestorVehicle")
-        lp_external_id = f"dc-{_ref_id(iv_ref)}" if iv_ref else None
+        iv_dc_id = _ref_id(iv_ref) if iv_ref else None
+        lp_external_id = f"dc-{iv_dc_id}" if iv_dc_id else None
+
+        doc_fund_id: str | None = None
+        if iv_dc_id is not None:
+            doc_fund_id = fund_map.get(iv_dc_id) or None
+        if not doc_fund_id:
+            fund_ref = row.get("Fund")
+            if fund_ref:
+                fid = _ref_id(fund_ref)
+                doc_fund_id = str(fid) if fid else None
 
         # Download the PDF
         try:
@@ -286,18 +300,27 @@ def _sync_attachments(
             continue
 
         doc_id = f"doc-{uuid.uuid4().hex[:12]}"
-        storage_path = os.path.join(settings.docs_storage_path, f"{doc_id}.pdf")
-
-        with open(storage_path, "wb") as f:
-            f.write(resp.content)
+        storage_key = build_document_storage_key(
+            doc_id=doc_id,
+            fund_id=doc_fund_id,
+            lp_id=lp_external_id,
+            instrument_kind="side_letter",
+        )
+        pdf_bytes = resp.content
+        storage.put(storage_key, pdf_bytes, "application/pdf")
 
         doc = LegalDocument(
             id=doc_id,
             external_id=external_id,
             title=attachment_name,
             lp_id=lp_external_id,
+            fund_id=doc_fund_id,
             source="dealcloud",
-            storage_path=storage_path,
+            storage_backend=storage.backend_name,
+            storage_key=storage_key,
+            content_sha256=hashlib.sha256(pdf_bytes).hexdigest(),
+            byte_size=len(pdf_bytes),
+            content_type="application/pdf",
             status="processing",
         )
         db.add(doc)

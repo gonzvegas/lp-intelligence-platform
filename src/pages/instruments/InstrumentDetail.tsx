@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
-import { CheckCircle2, FileText } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { CheckCircle2, ClipboardList, FileText, Plus, ThumbsDown, ThumbsUp } from 'lucide-react'
 import { api } from '../../api/client'
 import type {
   AuditEvent,
+  CreateObligationInput,
   ExtractedRestriction,
   LegalDocument,
   Obligation,
@@ -23,35 +24,111 @@ import {
   pipelineStepIndex,
   resolvePipelineStage,
 } from '../../domain/documentPipeline'
+import { DocumentPdfViewer } from '../../components/DocumentPdfViewer'
+import { ObligationFormModal } from '../../components/ObligationFormModal'
+import { effectiveObligationStatus, obligationDraftFromRestriction } from '../../domain/obligationDefaults'
+import { PERSONA_LABEL } from '../../domain/personas'
 import { formatDate } from '../../util/format'
 
 export function InstrumentDetail() {
   const { id } = useParams<{ id: string }>()
+  const [searchParams] = useSearchParams()
   const { persona } = useAppContext()
   const flash = useFlash()
   const canConfirm = can(persona, 'action:confirm_restriction')
+  const canManageObligations = can(persona, 'action:manage_obligation')
   const [doc, setDoc] = useState<LegalDocument | null>(null)
   const [rest, setRest] = useState<ExtractedRestriction[]>([])
   const [obls, setObls] = useState<Obligation[]>([])
   const [docAudits, setDocAudits] = useState<AuditEvent[]>([])
   const [loading, setLoading] = useState(true)
+  const [pdfPage, setPdfPage] = useState<number | undefined>(undefined)
+  const [focusedClause, setFocusedClause] = useState<string | undefined>(undefined)
+  const [obligationFormOpen, setObligationFormOpen] = useState(false)
+  const [obligationDraft, setObligationDraft] = useState<CreateObligationInput | null>(null)
+  const [reviewingRestriction, setReviewingRestriction] = useState<string | null>(null)
+  const pdfSectionRef = useRef<HTMLDivElement>(null)
+
+  const trackedRestrictionIds = useMemo(
+    () => new Set(obls.map((o) => o.sourceRestrictionId).filter(Boolean)),
+    [obls],
+  )
+
+  async function refreshObligations(documentId: string) {
+    const rows = await api.listObligations({ legalDocumentId: documentId })
+    setObls(rows)
+  }
+
+  function openCreateObligation(draft: CreateObligationInput) {
+    setObligationDraft(draft)
+    setObligationFormOpen(true)
+  }
+
+  function openCreateFromRestriction(r: ExtractedRestriction) {
+    if (!doc) return
+    openCreateObligation(obligationDraftFromRestriction(doc, r))
+  }
+
+  function openBlankObligation() {
+    if (!doc) return
+    openCreateObligation({
+      title: '',
+      kind: 'other',
+      instrumentKind: doc.kind,
+      lpId: doc.lpId,
+      dealId: doc.dealId,
+      legalDocumentId: doc.id,
+      ownerRole: 'Compliance',
+    })
+  }
+
+  async function submitObligation(values: CreateObligationInput) {
+    await api.createObligation({
+      ...values,
+      createdBy: PERSONA_LABEL[persona],
+    })
+    if (id) {
+      await refreshObligations(id)
+      const audits = await api.listAuditEvents({ entityRef: id, limit: 50 })
+      setDocAudits(audits)
+    }
+    flash('Obligation created.')
+  }
+
+  function viewInPdf(r: ExtractedRestriction) {
+    setPdfPage(r.pageNum && r.pageNum > 0 ? r.pageNum : undefined)
+    setFocusedClause(r.clauseText ?? r.rawQuote ?? r.summary)
+    requestAnimationFrame(() => {
+      pdfSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+  }
+
+  useEffect(() => {
+    const p = parseInt(searchParams.get('page') ?? '', 10)
+    if (p > 0) {
+      setPdfPage(p)
+      requestAnimationFrame(() => {
+        pdfSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      })
+    }
+  }, [searchParams, id])
 
   useEffect(() => {
     if (!id) return
     let m = true
     setLoading(true)
     ;(async () => {
-      const [d, allR, allO, audits] = await Promise.all([
+      const [d, allR, docObls, audits] = await Promise.all([
         api.getLegalDocument(id),
         api.listRestrictions(),
-        api.listObligations(),
-        api.listAuditEvents(),
+        api.listObligations({ legalDocumentId: id }),
+        api.listAuditEvents({ entityRef: id, limit: 50 }),
       ])
       if (!m) return
       setDoc(d ?? null)
       setRest(allR.filter((r) => r.legalDocumentId === id))
-      setObls(allO.filter((o) => o.legalDocumentId === id))
-      setDocAudits(audits.filter((e) => e.entityRef === id))
+      setObls(docObls)
+      setDocAudits(audits)
       setLoading(false)
     })()
     return () => {
@@ -59,12 +136,28 @@ export function InstrumentDetail() {
     }
   }, [id])
 
-  async function confirmRestriction(rid: string) {
-    const updated = await api.reviewRestriction(rid, 'confirm')
-    if (!updated) return
-    const allR = await api.listRestrictions()
-    setRest(allR.filter((r) => r.legalDocumentId === id))
-    flash('Restriction confirmed — logged for audit.')
+  async function reviewRestrictionRow(rid: string, action: 'confirm' | 'reject') {
+    setReviewingRestriction(rid)
+    try {
+      const updated = await api.reviewRestriction(rid, action)
+      if (!updated) {
+        flash('Could not update restriction — try again or check your role.')
+        return
+      }
+      const [allR, audits] = await Promise.all([
+        api.listRestrictions(),
+        id ? api.listAuditEvents({ entityRef: id, limit: 50 }) : Promise.resolve([]),
+      ])
+      setRest(allR.filter((r) => r.legalDocumentId === id))
+      setDocAudits(audits)
+      flash(
+        action === 'confirm'
+          ? 'Restriction accepted — active in deal screening.'
+          : 'Restriction rejected — excluded from screening.',
+      )
+    } finally {
+      setReviewingRestriction(null)
+    }
   }
 
   if (!id) return <EmptyState title="Missing document id" />
@@ -224,17 +317,41 @@ export function InstrumentDetail() {
               </div>
             ) : null}
           </dl>
-          <button
-            type="button"
-            disabled
-            className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-[var(--color-border)] py-2 text-sm text-[var(--color-ink-muted)]"
-          >
-            <FileText size={14} />
-            Source PDF — available after document pipeline
-          </button>
+          {doc.hasContent ? (
+            <p className="mt-4 text-xs text-[var(--color-ink-muted)]">
+              Source PDF is stored in secured object storage and streamed through the API.
+            </p>
+          ) : (
+            <p className="mt-4 text-xs text-[var(--color-ink-muted)]">
+              No PDF on file yet — upload from the LP profile document priority panel.
+            </p>
+          )}
         </Card>
 
+        {doc.hasContent ? (
+          <Card title="Source PDF" className="lg:col-span-3">
+            <div ref={pdfSectionRef} className="scroll-mt-24">
+              <DocumentPdfViewer
+                documentId={doc.id}
+                title={doc.title}
+                page={pdfPage}
+                highlightClause={focusedClause}
+              />
+            </div>
+          </Card>
+        ) : null}
+
         <Card title="Screening facts (restrictions)" className="lg:col-span-2">
+          {canConfirm ? (
+            <p className="mb-4 text-xs text-[var(--color-ink-muted)]">
+              Extracted clauses stay draft until Legal or Compliance accepts them for deal screening.
+              Reject rows that are obligations, boilerplate, or extraction errors.
+            </p>
+          ) : (
+            <p className="mb-4 text-xs text-[var(--color-ink-muted)]">
+              Draft restrictions await Legal or Compliance review before they affect deal screening.
+            </p>
+          )}
           {rest.length === 0 ? (
             <EmptyState
               title="No restriction rows"
@@ -245,7 +362,9 @@ export function InstrumentDetail() {
               {rest.map((r) => (
                 <li
                   key={r.id}
-                  className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-muted)]/40 p-4"
+                  className={`rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-muted)]/40 p-4 ${
+                    r.reviewStatus === 'rejected' ? 'opacity-60' : ''
+                  }`}
                 >
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge tone="neutral" className="text-[10px]">
@@ -257,13 +376,13 @@ export function InstrumentDetail() {
                     <Badge tone={r.severity === 'hard' ? 'danger' : 'warning'}>
                       {r.severity}
                     </Badge>
-                    <Badge
-                      tone={r.reviewStatus === 'confirmed' ? 'success' : 'warning'}
-                    >
-                      {r.reviewStatus === 'draft'
-                        ? 'Extracted'
-                        : 'Confirmed by Compliance'}
-                    </Badge>
+                    {r.reviewStatus === 'confirmed' ? (
+                      <Badge tone="success">Accepted · active in screening</Badge>
+                    ) : r.reviewStatus === 'rejected' ? (
+                      <Badge tone="neutral">Rejected</Badge>
+                    ) : (
+                      <Badge tone="warning">Draft · awaiting review</Badge>
+                    )}
                     {r.documentVersionNumber != null ? (
                       <Badge tone="neutral" className="text-[10px]">
                         Clause ↔ doc v{r.documentVersionNumber}
@@ -281,35 +400,104 @@ export function InstrumentDetail() {
                     </p>
                   ) : null}
                   <p className="mt-2 text-sm text-[var(--color-ink)]">{r.summary}</p>
-                  {r.rawQuote ? (
+                  {r.clauseText ? (
+                    <p className="mt-2 text-xs italic text-[var(--color-ink-muted)]">
+                      “{r.clauseText}”
+                    </p>
+                  ) : r.rawQuote ? (
                     <p className="mt-2 text-xs italic text-[var(--color-ink-muted)]">
                       “{r.rawQuote}”
                     </p>
                   ) : null}
-                  {canConfirm && (
-                    <div className="mt-4 flex flex-wrap gap-2">
+                  {doc.hasContent ? (
+                    <div className="mt-3 flex flex-wrap gap-2">
                       <Button
                         variant="secondary"
-                        disabled={r.reviewStatus === 'confirmed'}
-                        onClick={() => confirmRestriction(r.id)}
+                        type="button"
+                        onClick={() => viewInPdf(r)}
                       >
-                        <CheckCircle2 size={13} />
-                        {r.reviewStatus === 'confirmed' ? 'Confirmed' : 'Confirm restriction'}
+                        <FileText size={13} />
+                        {r.pageNum ? `View in PDF (p. ${r.pageNum})` : 'View source PDF'}
                       </Button>
+                      {canManageObligations ? (
+                        <Button
+                          variant="secondary"
+                          type="button"
+                          disabled={trackedRestrictionIds.has(r.id)}
+                          onClick={() => openCreateFromRestriction(r)}
+                        >
+                          <ClipboardList size={13} />
+                          {trackedRestrictionIds.has(r.id)
+                            ? 'Obligation tracked'
+                            : 'Create obligation'}
+                        </Button>
+                      ) : null}
                     </div>
-                  )}
+                  ) : null}
+                  {canConfirm ? (
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {r.reviewStatus !== 'confirmed' ? (
+                        <Button
+                          variant="secondary"
+                          type="button"
+                          disabled={reviewingRestriction === r.id}
+                          onClick={() => reviewRestrictionRow(r.id, 'confirm')}
+                        >
+                          <ThumbsUp size={13} />
+                          {reviewingRestriction === r.id ? 'Saving…' : 'Accept for screening'}
+                        </Button>
+                      ) : (
+                        <Button variant="secondary" type="button" disabled>
+                          <CheckCircle2 size={13} />
+                          Accepted
+                        </Button>
+                      )}
+                      {r.reviewStatus !== 'rejected' ? (
+                        <Button
+                          variant="ghost"
+                          type="button"
+                          className="text-[var(--color-ink-muted)] hover:text-red-600"
+                          disabled={reviewingRestriction === r.id}
+                          onClick={() => reviewRestrictionRow(r.id, 'reject')}
+                        >
+                          <ThumbsDown size={13} />
+                          Reject
+                        </Button>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </li>
               ))}
             </ul>
           )}
         </Card>
 
-        <Card title="Operating obligations" className="lg:col-span-3">
+        <Card
+          title="Operating obligations"
+          className="lg:col-span-3"
+          actions={
+            canManageObligations ? (
+              <Button variant="secondary" type="button" onClick={openBlankObligation}>
+                <Plus size={14} />
+                Add obligation
+              </Button>
+            ) : undefined
+          }
+        >
           {obls.length === 0 ? (
-            <EmptyState title="No linked obligations" />
+            <EmptyState
+              title="No linked obligations"
+              hint={
+                canManageObligations
+                  ? 'Create operating tasks from extracted clauses above or add one manually.'
+                  : 'Compliance or Legal can create operating tasks from extracted clauses.'
+              }
+            />
           ) : (
             <ul className="divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)]">
-              {obls.map((o) => (
+              {obls.map((o) => {
+                const status = effectiveObligationStatus(o.status, o.dueAt)
+                return (
                 <li key={o.id} className="flex flex-wrap items-start justify-between gap-3 px-4 py-3">
                   <div>
                     <div className="font-medium text-[var(--color-ink)]">{o.title}</div>
@@ -318,6 +506,9 @@ export function InstrumentDetail() {
                       {o.sectionRef ? <span>{o.sectionRef}</span> : null}
                       {o.dueAt ? <span>Due {formatDate(o.dueAt)}</span> : null}
                       {o.ownerRole ? <span>Owner: {o.ownerRole}</span> : null}
+                      {o.sourceRestrictionId ? (
+                        <span className="font-mono">↳ clause {o.sourceRestrictionId}</span>
+                      ) : null}
                     </div>
                     {o.evidenceNote ? (
                       <p className="mt-2 text-xs text-[var(--color-ink-muted)]">
@@ -325,9 +516,9 @@ export function InstrumentDetail() {
                       </p>
                     ) : null}
                   </div>
-                  <ObligationStatusBadge status={o.status} />
+                  <ObligationStatusBadge status={status} />
                 </li>
-              ))}
+              )})}
             </ul>
           )}
           <div className="mt-4">
@@ -367,6 +558,16 @@ export function InstrumentDetail() {
           </p>
         </Card>
       </div>
+
+      {obligationDraft ? (
+        <ObligationFormModal
+          open={obligationFormOpen}
+          title={obligationDraft.sourceRestrictionId ? 'Create obligation from clause' : 'Add obligation'}
+          initial={obligationDraft}
+          onClose={() => setObligationFormOpen(false)}
+          onSubmit={submitObligation}
+        />
+      ) : null}
 
       <div className="mt-6">
         <Link

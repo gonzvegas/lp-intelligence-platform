@@ -17,5 +17,17 @@ class Settings(BaseSettings):
     secret_key: str = "dev-secret-change-in-production"
     docs_storage_path: str = "/data/docs"
 
+    # Document blob storage: local (dev) | azure (fund production)
+    storage_backend: str = "local"
+    azure_storage_account_name: str = ""
+    azure_storage_container: str = "lp-documents"
+    azure_storage_connection_string: str = ""
+    document_content_url_ttl_seconds: int = 900
+
+    # When False, Bearer tokens are validated against Entra JWKS (see app.auth_middleware).
+    skip_jwt_auth: bool = True
+    jwt_tenant_id: str = ""
+    jwt_audience: str = ""
+
 
 settings = Settings()

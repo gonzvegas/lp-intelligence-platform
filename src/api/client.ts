@@ -10,6 +10,7 @@ import type {
   LegalInstrumentKind,
   LimitedPartner,
   Obligation,
+  CreateObligationInput,
   ReportJob,
   Role,
   ScreeningRun,
@@ -23,10 +24,20 @@ import {
   clearFundInstrumentOrder,
   clearLpInstrumentOrder,
   getFundInstrumentOrder,
+  getEffectiveInstrumentOrder,
   getLpInstrumentOrderOverride,
   setFundInstrumentOrder,
   setLpInstrumentOrder,
 } from '../domain/instrumentPrecedenceStorage'
+import {
+  computeCapacitySnapshot,
+  computeSectorBreakdown,
+  DEFAULT_SINGLE_DEAL_CAP_PCT,
+} from '../domain/capacityCompute'
+import {
+  createScreeningRun as createScreeningRunFromDeal,
+  type ScreeningContext,
+} from '../domain/screeningEvaluate'
 import * as handlers from '../mocks/handlers'
 
 // ---------------------------------------------------------------------------
@@ -34,7 +45,80 @@ import * as handlers from '../mocks/handlers'
 // ---------------------------------------------------------------------------
 
 const USE_MOCKS = import.meta.env.VITE_USE_MOCKS !== 'false'
-const API_URL = (import.meta.env.VITE_API_URL ?? 'http://localhost:8000').replace(/\/$/, '')
+
+export { USE_MOCKS }
+
+type AccessTokenProvider = () => Promise<string | null>
+type ActorHeadersProvider = () => { name: string; persona: string } | null
+
+let accessTokenProvider: AccessTokenProvider | null = null
+let actorHeadersProvider: ActorHeadersProvider | null = null
+
+/** When Entra JWT is enforced on FastAPI, register a silent token provider (runs under MSAL). */
+export function setApiAccessTokenProvider(provider: AccessTokenProvider | null): void {
+  accessTokenProvider = provider
+}
+
+/** Sends X-Actor-Name / X-Actor-Persona on API requests for audit logging. */
+export function setApiActorHeadersProvider(provider: ActorHeadersProvider | null): void {
+  actorHeadersProvider = provider
+}
+
+async function buildHeaders(base?: HeadersInit): Promise<Headers> {
+  const h = base instanceof Headers ? new Headers(base) : new Headers(base ?? undefined)
+  const actor = actorHeadersProvider?.()
+  if (actor?.name) h.set('X-Actor-Name', actor.name)
+  if (actor?.persona) h.set('X-Actor-Persona', actor.persona)
+  if (accessTokenProvider) {
+    try {
+      const t = await Promise.race([
+        accessTokenProvider(),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500)),
+      ])
+      if (t) h.set('Authorization', `Bearer ${t}`)
+    } catch {
+      /* ignore auth helper failures — request proceeds without Bearer */
+    }
+  }
+  return h
+}
+
+const API_FETCH_TIMEOUT_MS = 20_000
+
+async function apiFetch(url: string, init?: RequestInit): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), API_FETCH_TIMEOUT_MS)
+  try {
+    return await fetch(url, { ...init, signal: controller.signal })
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      throw new Error(`Request timed out after ${API_FETCH_TIMEOUT_MS / 1000}s`)
+    }
+    throw e
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** In dev, default `/api` so Vite proxies to FastAPI (avoids browser CORS). Set VITE_API_URL for a full URL override. */
+function getApiBase(): string {
+  const env = (import.meta.env.VITE_API_URL as string | undefined)?.trim()
+  if (env) return env.replace(/\/$/, '')
+  if (import.meta.env.DEV) return '/api'
+  return 'http://localhost:8000'
+}
+
+function apiAbsoluteUrl(path: string): string {
+  const base = getApiBase()
+  const p = path.startsWith('/') ? path : `/${path}`
+  if (base.startsWith('http://') || base.startsWith('https://')) {
+    return `${base}${p}`
+  }
+  const origin =
+    typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5173'
+  const prefix = base.startsWith('/') ? base : `/${base}`
+  return `${origin}${prefix}${p}`
+}
 
 // ---------------------------------------------------------------------------
 // Mock helpers (kept for mock path)
@@ -50,34 +134,76 @@ function delay<T>(value: T): Promise<T> {
 // ---------------------------------------------------------------------------
 
 async function get<T>(path: string, params?: Record<string, string | undefined>): Promise<T> {
-  const url = new URL(`${API_URL}${path}`)
+  const url = new URL(apiAbsoluteUrl(path))
   if (params) {
     for (const [k, v] of Object.entries(params)) {
       if (v !== undefined) url.searchParams.set(k, v)
     }
   }
-  const res = await fetch(url.toString())
-  if (!res.ok) throw new Error(`GET ${path} → ${res.status}`)
+  const res = await apiFetch(url.toString(), { headers: await buildHeaders() })
+  if (!res.ok) {
+    const detail = await readResponseErrorDetail(res)
+    const msg =
+      detail && !detail.includes(String(res.status)) ? `${res.status}: ${detail}` : `GET ${path} → ${res.status}`
+    throw new Error(msg)
+  }
   return res.json() as Promise<T>
 }
 
 async function post<T>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await apiFetch(apiAbsoluteUrl(path), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: await buildHeaders({ 'Content-Type': 'application/json' }),
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
-  if (!res.ok) throw new Error(`POST ${path} → ${res.status}`)
+  if (!res.ok) {
+    const detail = await readResponseErrorDetail(res)
+    const msg =
+      detail && !detail.includes(String(res.status)) ? `${res.status}: ${detail}` : `POST ${path} → ${res.status}`
+    throw new Error(msg)
+  }
   return res.json() as Promise<T>
 }
 
+async function readResponseErrorDetail(res: Response): Promise<string> {
+  let text = ''
+  try {
+    text = await res.text()
+  } catch {
+    return res.statusText || String(res.status)
+  }
+  if (!text.trim()) return res.statusText || String(res.status)
+  try {
+    const j = JSON.parse(text) as { detail?: unknown }
+    const d = j.detail
+    if (typeof d === 'string') return d
+    if (Array.isArray(d))
+      return d
+        .map((v) => {
+          if (typeof v === 'object' && v !== null && 'msg' in v) return String((v as { msg: unknown }).msg)
+          try {
+            return JSON.stringify(v)
+          } catch {
+            return String(v)
+          }
+        })
+        .join('; ')
+  } catch {
+    /* plain text body */
+  }
+  return text.length > 500 ? `${text.slice(0, 500)}…` : text
+}
+
 async function patch<T>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await apiFetch(apiAbsoluteUrl(path), {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: await buildHeaders({ 'Content-Type': 'application/json' }),
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
-  if (!res.ok) throw new Error(`PATCH ${path} → ${res.status}`)
+  if (!res.ok) {
+    const detail = await readResponseErrorDetail(res)
+    throw new Error(detail.includes(String(res.status)) ? detail : `${res.status}: ${detail}`)
+  }
   return res.json() as Promise<T>
 }
 
@@ -89,9 +215,12 @@ async function patch<T>(path: string, body?: unknown): Promise<T> {
 function mapLp(r: any): LimitedPartner {
   return {
     id: r.id,
+    externalId: r.external_id ?? null,
     fundId: r.fund_id ?? '',
     name: r.name,
     investorType: r.entity_type ?? 'unknown',
+    jurisdiction: r.jurisdiction ?? null,
+    lpStatus: r.status ?? 'active',
     commitmentUsd: r.commitment_usd ?? 0,
     fundedUsd: r.funded_usd ?? 0,
   }
@@ -109,27 +238,64 @@ function mapDeal(r: any): Deal {
     structureTags: r.structure_tags ?? [],
     proposedAmountUsd: r.proposed_amount_usd ?? 0,
     pipelineStage: r.stage ?? r.status ?? 'pipeline',
+    ebitdaUsd: r.ebitda_usd ?? undefined,
+    revenueUsd: r.revenue_usd ?? undefined,
+    leverageMultiple: r.leverage_multiple ?? undefined,
+    ltvPct: r.ltv_pct ?? undefined,
+    attachmentPoint: r.attachment_point ?? undefined,
+    detachmentPoint: r.detachment_point ?? undefined,
+    dealType: r.deal_type ?? undefined,
+    securityType: r.security_type ?? undefined,
+    sponsored: r.sponsored ?? undefined,
+    coInvest: r.co_invest ?? undefined,
+    publicOrPrivate:
+      r.public_or_private === 'public'
+        ? 'public'
+        : r.public_or_private === 'private'
+          ? 'private'
+          : undefined,
   }
+}
+
+function mapDocumentReviewStatus(status: string): LegalDocument['reviewStatus'] {
+  if (status === 'needs_review' || status === 'completed') return 'extracted'
+  if (status === 'confirmed') return 'confirmed'
+  return 'processing'
+}
+
+function documentPipelineStageFromStatus(status: string): LegalDocument['pipelineStage'] | undefined {
+  if (status === 'needs_review') return 'extracted'
+  if (status === 'confirmed' || status === 'active') return 'active'
+  if (status === 'processing') return 'parsing'
+  return undefined
+}
+
+function sanitizeIngestionSource(raw: unknown): LegalDocument['ingestionSource'] {
+  const v = String(raw ?? 'manual').toLowerCase()
+  if (v === 'dealcloud' || v === 'csv_import' || v === 'manual') return v
+  return 'manual'
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function mapDocument(r: any): LegalDocument {
+  const status = String(r.status ?? 'pending')
   return {
     id: r.id,
     fundId: r.fund_id ?? '',
     lpId: r.lp_id ?? null,
-    dealId: null,
+    dealId: r.deal_id ?? null,
     kind: r.instrument_kind ?? 'lpa',
     title: r.title,
     uploadedAt: r.uploaded_at,
-    reviewStatus: r.status === 'needs_review' ? 'extracted' : r.status === 'confirmed' ? 'confirmed' : 'processing',
+    reviewStatus: mapDocumentReviewStatus(status),
     restrictionIds: [],
-    versionNumber: r.version_number ?? undefined,
-    supersedesDocumentId: r.supersedes_document_id ?? undefined,
-    replacedByDocumentId: r.replaced_by_document_id ?? undefined,
+    versionNumber: r.version_number ?? 1,
+    supersedesDocumentId: r.supersedes_document_id ?? null,
+    replacedByDocumentId: r.replaced_by_document_id ?? null,
     effectiveFrom: r.effective_from ?? undefined,
-    ingestionSource: r.ingestion_source ?? undefined,
-    pipelineStage: r.pipeline_stage ?? undefined,
+    ingestionSource: sanitizeIngestionSource(r.source ?? r.ingestion_source),
+    pipelineStage: documentPipelineStageFromStatus(status),
+    hasContent: Boolean(r.has_content),
   }
 }
 
@@ -141,15 +307,54 @@ function mapRestriction(r: any): ExtractedRestriction {
     legalDocumentId: r.legal_document_id,
     instrumentKind: r.instrument_kind ?? 'lpa',
     precedenceRank: r.precedence_rank ?? 50,
-    category: r.category ?? 'other',
+  category: r.category ?? 'other',
     severity: r.severity ?? 'soft',
     summary: r.summary,
     clauseText: r.clause_text ?? undefined,
     rawQuote: r.clause_text ?? undefined,
     effectiveFrom: r.created_at ?? new Date().toISOString(),
     reviewStatus: r.review_status ?? 'draft',
+    pageNum: r.page_num ?? undefined,
+    sectionRef: r.section_ref ?? undefined,
     documentVersionNumber: r.document_version_number ?? undefined,
     extractionBatchId: r.extraction_batch_id ?? undefined,
+  }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapObligation(r: any): Obligation {
+  return {
+    id: r.id,
+    title: r.title,
+    kind: r.kind ?? 'other',
+    instrumentKind: r.instrument_kind ?? 'lpa',
+    lpId: r.lp_id ?? null,
+    dealId: r.deal_id ?? null,
+    legalDocumentId: r.legal_document_id,
+    sourceRestrictionId: r.source_restriction_id ?? undefined,
+    sectionRef: r.section_ref ?? undefined,
+    dueAt: r.due_at ?? null,
+    recurrence: r.recurrence ?? undefined,
+    ownerRole: r.owner_role ?? 'Compliance',
+    status: r.status ?? 'open',
+    evidenceNote: r.evidence_note ?? undefined,
+    createdBy: r.created_by ?? undefined,
+    createdAt: r.created_at ?? undefined,
+  }
+}
+
+export type { CreateObligationInput }
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapAuditEvent(r: any): AuditEvent {
+  return {
+    id: r.id,
+    at: r.at,
+    actor: r.actor,
+    persona: r.persona ?? 'admin',
+    type: r.type,
+    summary: r.summary,
+    entityRef: r.entity_ref ?? undefined,
   }
 }
 
@@ -256,19 +461,15 @@ export const api = {
         }) ?? null,
       )
     }
-    try {
-      const r = await patch<unknown>(`/funds/${encodeURIComponent(fundId)}`, {
-        name: body.name,
-        vintage: body.vintage,
-        strategy: body.strategy,
-        target_size_usd: body.targetSizeUsd,
-        currency: body.currency ?? 'USD',
-        status: body.status ?? 'fundraising',
-      })
-      return mapFund(r)
-    } catch {
-      return null
-    }
+    const r = await patch<unknown>(`/funds/${encodeURIComponent(fundId)}`, {
+      name: body.name,
+      vintage: body.vintage ?? null,
+      strategy: body.strategy?.trim() ? body.strategy : null,
+      target_size_usd: body.targetSizeUsd,
+      currency: body.currency ?? 'USD',
+      status: body.status ?? 'fundraising',
+    })
+    return mapFund(r)
   },
 
   async createLP(body: { name: string; fundId?: string; entityType?: string; jurisdiction?: string; commitmentUsd?: number }): Promise<LimitedPartner> {
@@ -332,16 +533,36 @@ export const api = {
   async removeAllocationReal(allocationId: string): Promise<boolean> {
     if (USE_MOCKS) return delay(handlers.removeAllocation(allocationId))
     try {
-      const res = await fetch(`${API_URL}/allocations/${allocationId}`, { method: 'DELETE' })
+      const res = await apiFetch(apiAbsoluteUrl(`/allocations/${allocationId}`), {
+        method: 'DELETE',
+        headers: await buildHeaders(),
+      })
       return res.ok
     } catch { return false }
+  },
+
+  async updateAllocationReal(
+    allocationId: string,
+    updates: { dealName?: string; sector?: string; amountUsd?: number; closedAt?: string },
+  ): Promise<Allocation | null> {
+    if (USE_MOCKS) return delay(handlers.updateAllocation(allocationId, updates) ?? null)
+    try {
+      const r = await patch<unknown>(`/allocations/${encodeURIComponent(allocationId)}`, {
+        deal_name: updates.dealName,
+        sector: updates.sector,
+        amount_usd: updates.amountUsd,
+        closed_at: updates.closedAt,
+      })
+      return mapAllocation(r)
+    } catch {
+      return null
+    }
   },
 
   // --- Deals ---
   async listDeals(fundId?: string): Promise<Deal[]> {
     if (USE_MOCKS) return delay(handlers.listDeals(fundId))
-    // Real backend: don't filter by mock fund IDs — return all deals
-    const rows = await get<unknown[]>('/deals')
+    const rows = await get<unknown[]>('/deals', fundId ? { fund_id: fundId } : undefined)
     return rows.map(mapDeal)
   },
 
@@ -355,7 +576,34 @@ export const api = {
 
   async createDeal(input: Omit<Deal, 'id'>): Promise<Deal> {
     if (USE_MOCKS) return delay(handlers.createDeal(input))
-    const r = await post<unknown>('/deals', input)
+
+    function toUsdInt(n: number | undefined): number | undefined {
+      if (n === undefined || n === null || Number.isNaN(n)) return undefined
+      return Math.round(n)
+    }
+
+    const r = await post<unknown>('/deals', {
+      name: input.name,
+      fund_id: input.fundId?.trim() ? input.fundId : null,
+      sector: input.sector || null,
+      geography: input.geography || null,
+      stage: input.pipelineStage || null,
+      status: 'pipeline',
+      proposed_amount_usd: Math.round(Number(input.proposedAmountUsd)) || 0,
+      structure_tags: input.structureTags ?? null,
+      esg_flags: input.esgFlags ?? null,
+      deal_type: input.dealType ?? null,
+      security_type: input.securityType ?? null,
+      ebitda_usd: toUsdInt(input.ebitdaUsd),
+      revenue_usd: toUsdInt(input.revenueUsd),
+      leverage_multiple: input.leverageMultiple,
+      ltv_pct: input.ltvPct,
+      attachment_point: input.attachmentPoint,
+      detachment_point: input.detachmentPoint,
+      sponsored: input.sponsored,
+      co_invest: input.coInvest,
+      public_or_private: input.publicOrPrivate ?? null,
+    })
     return mapDeal(r)
   },
 
@@ -383,9 +631,13 @@ export const api = {
       return delay(undefined)
     }
     try {
-      await fetch(`${API_URL}/funds/${encodeURIComponent(fundId)}/instrument-precedence`, {
-        method: 'DELETE',
-      })
+      await apiFetch(
+        apiAbsoluteUrl(`/funds/${encodeURIComponent(fundId)}/instrument-precedence`),
+        {
+          method: 'DELETE',
+          headers: await buildHeaders(),
+        },
+      )
     } catch {
       /* non-mock backend may not support yet */
     }
@@ -423,9 +675,13 @@ export const api = {
       return delay(undefined)
     }
     try {
-      await fetch(`${API_URL}/lps/${encodeURIComponent(lpId)}/instrument-precedence`, {
-        method: 'DELETE',
-      })
+      await apiFetch(
+        apiAbsoluteUrl(`/lps/${encodeURIComponent(lpId)}/instrument-precedence`),
+        {
+          method: 'DELETE',
+          headers: await buildHeaders(),
+        },
+      )
     } catch {
       /* optional backend */
     }
@@ -434,8 +690,10 @@ export const api = {
   // --- LPs ---
   async listLPs(fundId?: string): Promise<LimitedPartner[]> {
     if (USE_MOCKS) return delay(handlers.listLPs(fundId))
-    // Real backend: don't filter by mock fund IDs — return all LPs
-    const rows = await get<unknown[]>('/lps')
+    const rows = await get<unknown[]>(
+      '/lps',
+      fundId?.trim() ? { fund_id: fundId.trim() } : undefined,
+    )
     return rows.map(mapLp)
   },
 
@@ -448,10 +706,12 @@ export const api = {
   },
 
   // --- Legal Documents ---
-  async listLegalDocuments(_fundId?: string): Promise<LegalDocument[]> {
-    if (USE_MOCKS) return delay(handlers.listLegalDocuments(_fundId))
-    // Real backend: return all documents
-    const rows = await get<unknown[]>('/documents')
+  async listLegalDocuments(fundId?: string): Promise<LegalDocument[]> {
+    if (USE_MOCKS) return delay(handlers.listLegalDocuments(fundId))
+    const rows = await get<unknown[]>(
+      '/documents',
+      fundId?.trim() ? { fund_id: fundId.trim() } : undefined,
+    )
     return rows.map(mapDocument)
   },
 
@@ -461,6 +721,71 @@ export const api = {
       const r = await get<unknown>(`/documents/${id}`)
       return mapDocument(r)
     } catch { return undefined }
+  },
+
+  async uploadLegalDocument(
+    lpId: string,
+    file: File,
+    opts?: { fundId?: string; instrumentKind?: LegalInstrumentKind; title?: string },
+  ): Promise<LegalDocument> {
+    if (USE_MOCKS) {
+      return delay(
+        handlers.uploadLegalDocumentForLp(lpId, file.name, {
+          fundId: opts?.fundId,
+          instrumentKind: opts?.instrumentKind ?? 'side_letter',
+          title: opts?.title,
+        }),
+      )
+    }
+
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('lp_id', lpId)
+    if (opts?.fundId?.trim()) fd.append('fund_id', opts.fundId.trim())
+    fd.append('instrument_kind', opts?.instrumentKind ?? 'side_letter')
+    if (opts?.title?.trim()) fd.append('title', opts.title.trim())
+
+    const res = await apiFetch(apiAbsoluteUrl('/documents/upload'), {
+      method: 'POST',
+      headers: await buildHeaders(),
+      body: fd,
+    })
+    if (!res.ok) throw new Error(`POST /documents/upload → ${res.status}`)
+    const r = await res.json()
+    return mapDocument(r)
+  },
+
+  async fetchDocumentPdfBlob(docId: string): Promise<Blob> {
+    if (USE_MOCKS) {
+      return new Blob(['Mock PDF — enable real API for source documents.'], { type: 'application/pdf' })
+    }
+    const res = await apiFetch(apiAbsoluteUrl(`/documents/${encodeURIComponent(docId)}/content`), {
+      headers: await buildHeaders(),
+    })
+    if (!res.ok) throw new Error(`GET /documents/${docId}/content → ${res.status}`)
+    return res.blob()
+  },
+
+  async getRestrictionCitation(docId: string, restrictionId: string): Promise<{
+    pageNum: number | null
+    contentUrl: string
+    delivery: string
+  } | null> {
+    if (USE_MOCKS) return null
+    try {
+      const r = await get<{
+        page_num: number | null
+        content_url: string
+        delivery: string
+      }>(`/documents/${encodeURIComponent(docId)}/restrictions/${encodeURIComponent(restrictionId)}/citation`)
+      return {
+        pageNum: r.page_num,
+        contentUrl: r.content_url,
+        delivery: r.delivery,
+      }
+    } catch {
+      return null
+    }
   },
 
   listSideLetters(): Promise<SideLetterDocument[]> {
@@ -524,73 +849,199 @@ export const api = {
     return null
   },
 
-  // --- Everything below stays on mocks until Phase 6 ---
+  // --- Obligations (user-created operating tasks) ---
 
-  listObligations(): Promise<Obligation[]> {
-    return delay(handlers.listObligations())
+  async listObligations(params?: {
+    lpId?: string
+    legalDocumentId?: string
+    status?: string
+  }): Promise<Obligation[]> {
+    if (USE_MOCKS) return delay(handlers.listObligations())
+    const rows = await get<unknown[]>('/obligations', {
+      lp_id: params?.lpId,
+      legal_document_id: params?.legalDocumentId,
+      status: params?.status,
+    })
+    return rows.map(mapObligation)
   },
 
-  completeObligation(id: string, actor: string): Promise<Obligation | null> {
-    return delay(handlers.completeObligation(id, actor) ?? null)
+  async createObligation(input: CreateObligationInput): Promise<Obligation> {
+    if (USE_MOCKS) return delay(handlers.createObligation(input))
+    const r = await post<unknown>('/obligations', {
+      title: input.title,
+      kind: input.kind,
+      instrument_kind: input.instrumentKind,
+      lp_id: input.lpId ?? null,
+      deal_id: input.dealId ?? null,
+      legal_document_id: input.legalDocumentId,
+      source_restriction_id: input.sourceRestrictionId ?? null,
+      section_ref: input.sectionRef ?? null,
+      due_at: input.dueAt ?? null,
+      recurrence: input.recurrence ?? null,
+      owner_role: input.ownerRole ?? 'Compliance',
+      evidence_note: input.evidenceNote ?? null,
+      created_by: input.createdBy ?? null,
+    })
+    return mapObligation(r)
+  },
+
+  async completeObligation(id: string, actor: string): Promise<Obligation | null> {
+    if (USE_MOCKS) return delay(handlers.completeObligation(id, actor) ?? null)
+    try {
+      const r = await post<unknown>(`/obligations/${encodeURIComponent(id)}/complete`)
+      return mapObligation(r)
+    } catch {
+      return null
+    }
   },
 
   allocationsForLp(lpId: string): Promise<Allocation[]> {
-    return delay(handlers.allocationsForLp(lpId))
+    return api.allocationsForLpReal(lpId)
   },
 
   addAllocation(lpId: string, dealName: string, sector: string, amountUsd: number, closedAt: string): Promise<Allocation> {
-    return delay(handlers.addAllocation(lpId, dealName, sector, amountUsd, closedAt))
+    return api.addAllocationReal(lpId, dealName, sector, amountUsd, closedAt)
   },
 
-  updateAllocation(allocationId: string, patch: { dealName?: string; sector?: string; amountUsd?: number; closedAt?: string }): Promise<Allocation | null> {
-    return delay(handlers.updateAllocation(allocationId, patch) ?? null)
+  updateAllocation(
+    allocationId: string,
+    patch: { dealName?: string; sector?: string; amountUsd?: number; closedAt?: string },
+  ): Promise<Allocation | null> {
+    return api.updateAllocationReal(allocationId, patch)
   },
 
   removeAllocation(allocationId: string): Promise<boolean> {
-    return delay(handlers.removeAllocation(allocationId))
+    return api.removeAllocationReal(allocationId)
   },
 
-  sectorBreakdownForLp(lpId: string): Promise<Array<{ sector: string; amountUsd: number; pct: number }>> {
-    return delay(handlers.sectorBreakdownForLp(lpId))
+  async sectorBreakdownForLp(lpId: string): Promise<Array<{ sector: string; amountUsd: number; pct: number }>> {
+    if (USE_MOCKS) return delay(handlers.sectorBreakdownForLp(lpId))
+    try {
+      const [lpRaw, rows] = await Promise.all([
+        get<unknown>(`/lps/${encodeURIComponent(lpId)}`),
+        get<unknown[]>('/allocations', { lp_id: lpId }),
+      ])
+      const lp = mapLp(lpRaw)
+      return computeSectorBreakdown(lp, rows.map(mapAllocation))
+    } catch {
+      return []
+    }
   },
 
   listSectorConcentrationRules(lpId?: string): Promise<SectorConcentrationRule[]> {
-    return delay(handlers.listSectorConcentrationRules(lpId))
+    if (USE_MOCKS) return delay(handlers.listSectorConcentrationRules(lpId))
+    return Promise.resolve([])
   },
 
   updateLpCommitment(lpId: string, commitmentUsd: number, fundedUsd: number): Promise<LimitedPartner | null> {
-    return delay(handlers.updateLpCommitment(lpId, commitmentUsd, fundedUsd) ?? null)
+    if (USE_MOCKS) return delay(handlers.updateLpCommitment(lpId, commitmentUsd, fundedUsd) ?? null)
+    return api.updateLP(lpId, { commitmentUsd, fundedUsd })
   },
 
-  capacitySnapshot(lpId: string): Promise<CapacitySnapshot | null> {
-    const lp = handlers.getLpById(lpId)
-    return delay(lp ? handlers.capacitySnapshotForLp(lp) : null)
+  async capacitySnapshot(lpId: string): Promise<CapacitySnapshot | null> {
+    if (USE_MOCKS) {
+      const lp = handlers.getLpById(lpId)
+      return delay(lp ? handlers.capacitySnapshotForLp(lp) : null)
+    }
+    try {
+      const [lpRaw, rows] = await Promise.all([
+        get<unknown>(`/lps/${encodeURIComponent(lpId)}`),
+        get<unknown[]>('/allocations', { lp_id: lpId }),
+      ])
+      const lp = mapLp(lpRaw)
+      const allocations = rows.map(mapAllocation)
+      const rule = handlers.capacityRuleForLp(lpId)
+      const pct = rule?.maxSingleInvestmentPct ?? DEFAULT_SINGLE_DEAL_CAP_PCT
+      return computeCapacitySnapshot(lp, allocations, pct)
+    } catch {
+      return null
+    }
   },
 
-  runScreening(dealId: string, runBy: string): Promise<ScreeningRun | null> {
-    const deal = handlers.getDealById(dealId)
-    if (!deal) return delay(null)
-    const run = handlers.createScreeningRun(deal, runBy)
-    handlers.appendAuditEvent({
-      at: run.runAt,
-      actor: run.runBy,
-      persona: 'gp',
-      type: 'screening_run',
-      summary: `Screening run ${run.id} for ${deal.name} — inputs hash ${run.inputsHash}.`,
-      entityRef: run.id,
+  async screeningContextForFund(fundId: string): Promise<ScreeningContext> {
+    const [lps, restrictionRows, docs] = await Promise.all([
+      api.listLPs(fundId),
+      get<unknown[]>('/restrictions'),
+      api.listLegalDocuments(fundId),
+    ])
+    const lpIds = new Set(lps.map((lp) => lp.id))
+    const mappedRestrictions = restrictionRows
+      .map(mapRestriction)
+      .filter((r) => r.lpId === null || lpIds.has(r.lpId))
+
+    const allocationsByLp: Record<string, Allocation[]> = {}
+    try {
+      const allocRows = await get<unknown[]>('/allocations', { fund_id: fundId })
+      for (const a of allocRows.map(mapAllocation)) {
+        if (!allocationsByLp[a.lpId]) allocationsByLp[a.lpId] = []
+        allocationsByLp[a.lpId].push(a)
+      }
+    } catch {
+      const perLp = await Promise.all(lps.map((lp) => api.allocationsForLpReal(lp.id)))
+      lps.forEach((lp, i) => {
+        allocationsByLp[lp.id] = perLp[i] ?? []
+      })
+    }
+
+    const sectorRules = USE_MOCKS
+      ? (await handlers.listSectorConcentrationRules()).filter((r) => lpIds.has(r.lpId))
+      : []
+
+    return {
+      lps,
+      restrictions: mappedRestrictions,
+      allocationsByLp,
+      sectorConcentrationRules: sectorRules,
+      legalDocuments: docs,
+      getInstrumentOrder: getEffectiveInstrumentOrder,
+    }
+  },
+
+  async screeningRunForDeal(deal: Deal, runBy: string): Promise<ScreeningRun> {
+    if (USE_MOCKS) return delay(handlers.createScreeningRun(deal, runBy))
+    const ctx = await api.screeningContextForFund(deal.fundId)
+    return createScreeningRunFromDeal(deal, ctx, runBy, 'rules-api-2026.05')
+  },
+
+  async runScreening(dealId: string, runBy: string): Promise<ScreeningRun | null> {
+    if (USE_MOCKS) {
+      const deal = handlers.getDealById(dealId)
+      if (!deal) return delay(null)
+      const run = handlers.createScreeningRun(deal, runBy)
+      handlers.appendAuditEvent({
+        at: run.runAt,
+        actor: run.runBy,
+        persona: 'gp',
+        type: 'screening_run',
+        summary: `Screening run ${run.id} for ${deal.name} — inputs hash ${run.inputsHash}.`,
+        entityRef: run.id,
+      })
+      return delay(run)
+    }
+    const deal = await api.getDeal(dealId)
+    if (!deal) return null
+    return api.screeningRunForDeal(deal, runBy)
+  },
+
+  async evaluateScreeningOnly(dealId: string): Promise<ScreeningRun | null> {
+    if (USE_MOCKS) {
+      const deal = handlers.getDealById(dealId)
+      if (!deal) return delay(null)
+      return delay(handlers.createScreeningRun(deal, 'Preview'))
+    }
+    const deal = await api.getDeal(dealId)
+    if (!deal) return null
+    return api.screeningRunForDeal(deal, 'Preview')
+  },
+
+  async listAuditEvents(params?: { entityRef?: string; type?: string; limit?: number }): Promise<AuditEvent[]> {
+    if (USE_MOCKS) return delay(handlers.listAuditEvents())
+    const rows = await get<unknown[]>('/audit-events', {
+      entity_ref: params?.entityRef,
+      type: params?.type,
+      limit: params?.limit != null ? String(params.limit) : undefined,
     })
-    return delay(run)
-  },
-
-  evaluateScreeningOnly(dealId: string): Promise<ScreeningRun | null> {
-    const deal = handlers.getDealById(dealId)
-    if (!deal) return delay(null)
-    const run = handlers.createScreeningRun(deal, 'Preview')
-    return delay(run)
-  },
-
-  listAuditEvents(): Promise<AuditEvent[]> {
-    return delay(handlers.listAuditEvents())
+    return rows.map(mapAuditEvent)
   },
 
   listSignOffs(): Promise<SignOff[]> {

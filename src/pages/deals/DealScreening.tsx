@@ -42,17 +42,21 @@ export function DealScreening() {
     if (!dealId) return
     let m = true
     ;(async () => {
-      const [d, lp, r] = await Promise.all([
-        api.getDeal(dealId),
-        api.listLPs(),  // fund-scoped LPs loaded via deal's fundId after deal loads
+      const d = await api.getDeal(dealId)
+      if (!m) return
+      if (!d) {
+        setLoading(false)
+        return
+      }
+      setDeal(d)
+      const [lp, r, preview] = await Promise.all([
+        api.listLPs(d.fundId),
         api.listRestrictions(),
+        api.screeningRunForDeal(d, 'Preview'),
       ])
       if (!m) return
-      setDeal(d ?? null)
       setLps(lp)
       setRestrictions(r)
-      const preview = await api.evaluateScreeningOnly(dealId)
-      if (!m) return
       setRun(preview)
       setLoading(false)
     })()
@@ -342,8 +346,12 @@ export function DealScreening() {
                             <Badge tone="neutral" className="text-[10px]">
                               {precedencePriorityLabel(h.precedenceRank)}
                             </Badge>
-                            <Link className="text-xs font-medium text-[var(--color-accent)] hover:underline" to={`/instruments/${h.legalDocumentId}`}>
+                            <Link
+                              className="text-xs font-medium text-[var(--color-accent)] hover:underline"
+                              to={`/instruments/${h.legalDocumentId}?page=${r?.pageNum ?? ''}&from=screening`}
+                            >
                               {h.instrumentTitle}
+                              {r?.pageNum ? ` · p. ${r.pageNum}` : ''}
                             </Link>
                             {r && (
                               <>

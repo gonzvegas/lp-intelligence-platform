@@ -129,7 +129,7 @@ export function DealList() {
   useEffect(() => {
     let m = true
     setLoading(true)
-    api.listDeals(fundId).then((d) => {
+    api.listDeals(fundId || undefined).then((d) => {
       if (!m) return
       setDeals(d)
       setLoading(false)
@@ -159,7 +159,7 @@ export function DealList() {
     setSaving(true)
     try {
       const deal = await api.createDeal({
-        fundId: fundId ?? 'fund-1',
+        fundId: fundId ?? '',
         name: form.name.trim(),
         sector: form.sector,
         geography: form.geography.trim(),

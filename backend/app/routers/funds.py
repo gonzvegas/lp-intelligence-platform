@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.fund import Fund
-from app.schemas.fund import FundCreate, FundOut
+from app.schemas.fund import FundCreate, FundOut, FundPatch
 
 router = APIRouter(prefix="/funds", tags=["funds"])
 
@@ -37,13 +37,14 @@ async def create_fund(body: FundCreate, db: AsyncSession = Depends(get_db)) -> F
 
 @router.patch("/{fund_id}", response_model=FundOut)
 async def update_fund(
-    fund_id: str, body: FundCreate, db: AsyncSession = Depends(get_db)
+    fund_id: str, body: FundPatch, db: AsyncSession = Depends(get_db)
 ) -> Fund:
     result = await db.execute(select(Fund).where(Fund.id == fund_id))
     fund = result.scalar_one_or_none()
     if fund is None:
         raise HTTPException(status_code=404, detail="Fund not found")
-    for k, v in body.model_dump(exclude_none=True).items():
+    updates = body.model_dump(exclude_unset=True)
+    for k, v in updates.items():
         setattr(fund, k, v)
     await db.commit()
     await db.refresh(fund)

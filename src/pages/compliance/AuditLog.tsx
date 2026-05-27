@@ -47,7 +47,7 @@ export function AuditLog() {
                 <span className="absolute -start-1.5 mt-1.5 flex h-3 w-3 rounded-full border border-[var(--color-border)] bg-[var(--color-accent)]" />
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge tone="neutral">{formatDate(e.at)}</Badge>
-                  <Badge tone="accent">{PERSONA_LABEL[e.persona]}</Badge>
+                  <Badge tone="accent">{PERSONA_LABEL[e.persona as keyof typeof PERSONA_LABEL] ?? e.persona}</Badge>
                   <Badge tone="neutral">{e.type.replaceAll('_', ' ')}</Badge>
                 </div>
                 <p className="mt-2 text-sm font-medium text-[var(--color-ink)]">

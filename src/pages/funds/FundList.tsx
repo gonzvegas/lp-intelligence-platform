@@ -204,8 +204,8 @@ function EditFundForm({ fund, onSaved, onClose }: EditFundFormProps) {
         return
       }
       onSaved()
-    } catch {
-      setError('Failed to update fund. Please try again.')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to update fund. Please try again.')
     } finally {
       setSaving(false)
     }
@@ -597,7 +597,10 @@ export function FundList() {
           fund={managingLpsForFund}
           allFunds={funds}
           onClose={() => setManagingLpsForFund(null)}
-          onSaved={() => setManagingLpsForFund(null)}
+          onSaved={() => {
+            void refreshFunds()
+            setManagingLpsForFund(null)
+          }}
         />
       )}
 

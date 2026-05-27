@@ -1,4 +1,7 @@
-import { ChevronDown, Moon, Sun } from 'lucide-react'
+import { useMsal } from '@azure/msal-react'
+import { ChevronDown, LogOut, Moon, Sun } from 'lucide-react'
+import { useLocation } from 'react-router-dom'
+import { getEntraConfigured, isAuthBypassed } from '../auth/msalConfig'
 import type { PersonaId } from '../domain/types'
 import { PERSONA_LABEL } from '../domain/personas'
 import { useAppContext } from '../context/AppContext'
@@ -19,6 +22,31 @@ const PERSONA_COLOR: Record<PersonaId, string> = {
   ir: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/55 dark:text-emerald-200',
   legal: 'bg-amber-100 text-amber-800 dark:bg-amber-900/55 dark:text-amber-200',
   admin: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200',
+}
+
+function EntraSignOutButtonInner() {
+  const { instance } = useMsal()
+
+  return (
+    <button
+      type="button"
+      onClick={() =>
+        void instance.logoutRedirect({
+          postLogoutRedirectUri: `${window.location.origin}/`,
+        })
+      }
+      className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-muted)] transition hover:bg-[var(--color-surface-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/30"
+      title="Sign out of Microsoft"
+    >
+      <LogOut size={14} strokeWidth={2} className="shrink-0" aria-hidden />
+      Log out
+    </button>
+  )
+}
+
+function EntraSignOutButton() {
+  if (!getEntraConfigured() || isAuthBypassed()) return null
+  return <EntraSignOutButtonInner />
 }
 
 function SelectField({
@@ -58,6 +86,7 @@ function SelectField({
 }
 
 export function TopBar() {
+  const { pathname } = useLocation()
   const {
     fundId,
     setFundId,
@@ -72,31 +101,36 @@ export function TopBar() {
   const selectValue =
     fundId && funds.some((f) => f.id === fundId) ? fundId : funds[0]?.id ?? ''
 
+  /** Fund picker is meaningless on Fund Management — the whole page is funds. */
+  const showFundPicker = pathname.replace(/\/$/, '') !== '/funds'
+
   const personaLabel = PERSONA_LABEL[persona]
   const initials = PERSONA_INITIALS[persona]
 
   return (
     <header className="flex flex-wrap items-center justify-between gap-4 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-3">
       <div className="flex flex-wrap items-end gap-6">
-        <SelectField
-          label="Fund"
-          value={selectValue}
-          onChange={setFundId}
-          disabled={fundsLoading || funds.length === 0}
-        >
-          {fundsLoading ? (
-            <option value="">Loading funds…</option>
-          ) : funds.length === 0 ? (
-            <option value="">No funds yet — add under Fund Management</option>
-          ) : (
-            funds.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.name}
-                {f.vintage ? ` (${f.vintage})` : ''}
-              </option>
-            ))
-          )}
-        </SelectField>
+        {showFundPicker ? (
+          <SelectField
+            label="Fund"
+            value={selectValue}
+            onChange={setFundId}
+            disabled={fundsLoading || funds.length === 0}
+          >
+            {fundsLoading ? (
+              <option value="">Loading funds…</option>
+            ) : funds.length === 0 ? (
+              <option value="">No funds yet — add under Fund Management</option>
+            ) : (
+              funds.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name}
+                  {f.vintage ? ` (${f.vintage})` : ''}
+                </option>
+              ))
+            )}
+          </SelectField>
+        ) : null}
 
         <SelectField
           label="View as"
@@ -112,6 +146,7 @@ export function TopBar() {
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
+        <EntraSignOutButton />
         <button
           type="button"
           onClick={toggleColorScheme}

@@ -29,8 +29,12 @@ export function CapacityOverview() {
   }, [fundId])
 
   const totalCommitment = rows.reduce((s, r) => s + r.lp.commitmentUsd, 0)
-  const totalCalled = rows.reduce((s, r) => s + r.lp.fundedUsd, 0)
-  const totalUncalled = rows.reduce((s, r) => s + (r.snap?.remainingCommitmentUsd ?? (r.lp.commitmentUsd - r.lp.fundedUsd)), 0)
+  const deployedFor = (r: RowData) => r.snap?.deployedUsd ?? r.lp.fundedUsd
+  const totalCalled = rows.reduce((s, r) => s + deployedFor(r), 0)
+  const totalUncalled = rows.reduce(
+    (s, r) => s + (r.snap?.remainingCommitmentUsd ?? (r.lp.commitmentUsd - deployedFor(r))),
+    0,
+  )
   const calledPct = totalCommitment > 0 ? Math.round((totalCalled / totalCommitment) * 100) : 0
 
   return (
@@ -89,7 +93,7 @@ export function CapacityOverview() {
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]">
               {rows.map(({ lp, snap }) => {
-                    const called = lp.fundedUsd
+                    const called = snap?.deployedUsd ?? lp.fundedUsd
                     const uncalled = snap?.remainingCommitmentUsd ?? (lp.commitmentUsd - called)
                     const pct = lp.commitmentUsd > 0 ? Math.round((called / lp.commitmentUsd) * 100) : 0
 

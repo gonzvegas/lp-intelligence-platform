@@ -306,7 +306,14 @@ function CreateLpForm({ funds, defaultFundId, onSuccess, onClose }: CreateLpForm
         ) : (
           <form onSubmit={submitExisting} className="space-y-4">
             <p className="text-xs text-[var(--color-ink-muted)]">
-              Choose investors already in the platform and assign them to a fund at once (including moving from another fund in this demo).
+              Choose investors already on the platform and assign them to a fund (they can move from another fund).
+              Rows start{' '}
+              <span className="font-medium text-[var(--color-ink)]">unchecked</span>; the badge is their{' '}
+              <span className="font-medium text-[var(--color-ink)]">current</span> assignment.
+            </p>
+            <p className="mt-2 text-[10px] text-[var(--color-ink-muted)]">
+              To change fund <span className="font-medium text-[var(--color-ink)]">status</span> or other metadata, use{' '}
+              <span className="font-medium text-[var(--color-ink)]">Fund Management → Edit</span>.
             </p>
 
             <div>
@@ -449,30 +456,64 @@ export function LpList() {
   const queryFundId = searchParams.get('fund') ?? fundId
 
   const [rows, setRows] = useState<LimitedPartner[]>([])
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [q, setQ] = useState('')
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
+  const [addLpModalNonce, setAddLpModalNonce] = useState(0)
   const [showBulkImport, setShowBulkImport] = useState(false)
+
+  function openAddLpModal() {
+    setAddLpModalNonce((n) => n + 1)
+    setShowCreate(true)
+  }
 
   function reloadLps() {
     const fp = queryFundId || undefined
-    return api.listLPs(fp).then(setRows)
+    setLoadError(null)
+    return api
+      .listLPs(fp)
+      .then(setRows)
+      .catch(() => {
+        const mocks = import.meta.env.VITE_USE_MOCKS !== 'false'
+        const probe = import.meta.env.VITE_API_URL?.trim() || 'http://127.0.0.1:8000'
+        const devProxy = import.meta.env.DEV && !import.meta.env.VITE_API_URL?.trim()
+        setLoadError(
+          mocks
+            ? 'Using mock data (VITE_USE_MOCKS is not false). Set VITE_USE_MOCKS=false and restart vite.'
+            : devProxy
+              ? `Could not reach the API through the dev proxy (/api → ${probe}). Confirm Docker is up, run: curl ${probe}/health — then restart the Vite dev server (npm run dev).`
+              : `Could not load LPs (${probe}). Run: docker compose up -d — then curl ${probe}/health`,
+        )
+      })
   }
 
   useEffect(() => {
     let m = true
     setLoading(true)
+    setLoadError(null)
     const fp = queryFundId || undefined
     api
       .listLPs(fp)
       .then((lps) => {
         if (!m) return
         setRows(lps)
+        setLoadError(null)
         setLoading(false)
       })
       .catch(() => {
         if (!m) return
         setRows([])
+        const mocks = import.meta.env.VITE_USE_MOCKS !== 'false'
+        const probe = import.meta.env.VITE_API_URL?.trim() || 'http://127.0.0.1:8000'
+        const devProxy = import.meta.env.DEV && !import.meta.env.VITE_API_URL?.trim()
+        setLoadError(
+          mocks
+            ? 'Using mock data (VITE_USE_MOCKS is not false). Set VITE_USE_MOCKS=false in .env.development and restart vite to load data from Postgres.'
+            : devProxy
+              ? `Could not reach the API through the dev proxy (/api → ${probe}). Confirm Docker is up, run: curl ${probe}/health — then restart the Vite dev server (npm run dev).`
+              : `Could not load LPs from ${probe}. Run: docker compose up -d — then curl ${probe}/health`,
+        )
         setLoading(false)
       })
     return () => {
@@ -496,7 +537,7 @@ export function LpList() {
             <Button variant="secondary" onClick={() => setShowBulkImport(true)}>
               <Upload size={15} /> Import CSV
             </Button>
-            <Button variant="primary" onClick={() => setShowCreate(true)}>
+            <Button variant="primary" onClick={openAddLpModal}>
               <Plus size={15} /> Add LP
             </Button>
           </div>
@@ -515,6 +556,7 @@ export function LpList() {
 
       {showCreate && (
         <CreateLpForm
+          key={addLpModalNonce}
           funds={funds}
           defaultFundId={queryFundId}
           onSuccess={() => {
@@ -534,6 +576,15 @@ export function LpList() {
           aria-label="Search limited partners"
         />
       </div>
+
+      {loadError && (
+        <div
+          role="alert"
+          className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-900/80 dark:bg-amber-950/40 dark:text-amber-100"
+        >
+          {loadError}
+        </div>
+      )}
 
       {loading ? (
         <p className="text-sm text-[var(--color-ink-muted)]">Loading…</p>
@@ -555,7 +606,7 @@ export function LpList() {
                     No LPs found.{' '}
                     <button
                       type="button"
-                      onClick={() => setShowCreate(true)}
+                      onClick={openAddLpModal}
                       className="text-[var(--color-accent)] hover:underline"
                     >
                       Add one manually

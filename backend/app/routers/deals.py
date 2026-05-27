@@ -1,10 +1,12 @@
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.deal import Deal
-from app.schemas.deal import DealOut
+from app.schemas.deal import DealCreate, DealOut
 
 router = APIRouter(prefix="/deals", tags=["deals"])
 
@@ -19,6 +21,15 @@ async def list_deals(
         q = q.where(Deal.fund_id == fund_id)
     result = await db.execute(q)
     return list(result.scalars().all())
+
+
+@router.post("", response_model=DealOut, status_code=201)
+async def create_deal(body: DealCreate, db: AsyncSession = Depends(get_db)) -> Deal:
+    deal = Deal(id=f"deal-{uuid.uuid4().hex[:12]}", **body.model_dump())
+    db.add(deal)
+    await db.commit()
+    await db.refresh(deal)
+    return deal
 
 
 @router.get("/{deal_id}", response_model=DealOut)

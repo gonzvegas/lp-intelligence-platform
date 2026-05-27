@@ -1,0 +1,15 @@
+# Replace sitemap URL and rules with your production origin (VITE_PUBLIC_SITE_URL).
+User-agent: *
+Allow: /
+Disallow: /login
+Disallow: /dashboard
+Disallow: /funds
+Disallow: /lps
+Disallow: /instruments
+Disallow: /obligations
+Disallow: /deals
+Disallow: /capacity
+Disallow: /compliance
+Disallow: /settings
+
+Sitemap: https://example.com/sitemap.xml

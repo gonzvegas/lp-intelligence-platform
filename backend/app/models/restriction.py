@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -16,6 +16,11 @@ class ExtractedRestriction(Base):
     category: Mapped[str | None] = mapped_column(String)
     summary: Mapped[str] = mapped_column(Text, nullable=False)
     clause_text: Mapped[str | None] = mapped_column(Text)
+    section_ref: Mapped[str | None] = mapped_column(String)
+    source_chunk_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("document_chunks.id", ondelete="SET NULL"), nullable=True
+    )
+    page_num: Mapped[int | None] = mapped_column(Integer)
     instrument_kind: Mapped[str | None] = mapped_column(String)
     severity: Mapped[str] = mapped_column(String, default="soft")
     review_status: Mapped[str] = mapped_column(String, default="draft")

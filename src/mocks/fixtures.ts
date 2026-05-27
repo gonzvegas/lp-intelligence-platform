@@ -4,6 +4,7 @@ import type {
   CapacityRule,
   Deal,
   ExtractedRestriction,
+  Fund,
   IntegrationStatus,
   LegalDocument,
   LimitedPartner,
@@ -15,6 +16,22 @@ import type {
   SyncJob,
   UserAccount,
 } from '../domain/types'
+
+/** Default fund registry for mock mode — ids must match `fundId` on fixtures (LPs, deals, docs). */
+export const seedFunds: Fund[] = [
+  {
+    id: 'fund-1',
+    externalId: null,
+    name: 'Comvest Credit Partners IV',
+    vintage: '2023',
+    strategy: 'Direct Lending',
+    targetSizeUsd: 500_000_000,
+    currency: 'USD',
+    status: 'active',
+    createdAt: '2023-06-01T00:00:00.000Z',
+    updatedAt: '2023-06-01T00:00:00.000Z',
+  },
+]
 
 export const limitedPartners: LimitedPartner[] = [
   {
